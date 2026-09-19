@@ -1,0 +1,30 @@
+rules_version = '2';
+
+// FaceBooky - Cloud Storage security rules
+// Layout: media/{uid}/{kind}/{file}   kind = profile | images | stickers | voice | music
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /media/{uid}/{kind}/{fileName} {
+      // Any signed-in (anonymous) FaceBooky user can view shared chat media.
+      allow read: if request.auth != null;
+
+      // Only the owner can upload into their own folder, with type + size limits.
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && (
+          (kind == 'profile'  && request.resource.contentType.matches('image/.*') && request.resource.size < 2 * 1024 * 1024) ||
+          (kind == 'images'   && request.resource.contentType.matches('image/.*') && request.resource.size < 8 * 1024 * 1024) ||
+          (kind == 'stickers' && request.resource.contentType.matches('image/.*') && request.resource.size < 2 * 1024 * 1024) ||
+          (kind == 'voice'    && request.resource.contentType.matches('audio/.*') && request.resource.size < 10 * 1024 * 1024) ||
+          (kind == 'music'    && request.resource.contentType.matches('audio/.*') && request.resource.size <= 20 * 1024 * 1024)
+        );
+
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

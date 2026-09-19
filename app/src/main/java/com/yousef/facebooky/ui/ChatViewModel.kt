@@ -1,0 +1,388 @@
+package com.yousef.facebooky.ui
+
+import android.app.Application
+import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.yousef.facebooky.audio.VoiceMessagePlayer
+import com.yousef.facebooky.audio.VoiceRecorder
+import com.yousef.facebooky.call.CallManager
+import com.yousef.facebooky.call.CallSignaling
+import com.yousef.facebooky.data.AuthRepository
+import com.yousef.facebooky.data.ChatRepository
+import com.yousef.facebooky.data.FirebasePaths
+import com.yousef.facebooky.data.MusicRepository
+import com.yousef.facebooky.data.StorageRepository
+import com.yousef.facebooky.data.UserRepository
+import com.yousef.facebooky.data.model.ChatMessage
+import com.yousef.facebooky.data.model.ConnectionStatus
+import com.yousef.facebooky.data.model.MessageType
+import com.yousef.facebooky.data.model.Song
+import com.yousef.facebooky.data.model.UserProfile
+import com.yousef.facebooky.music.MusicController
+import com.yousef.facebooky.util.ImageUtils
+import com.yousef.facebooky.util.MediaUtils
+import com.yousef.facebooky.util.networkAvailableFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.min
+
+class ChatViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val db = FirebaseFirestore.getInstance()
+    private val authRepo = AuthRepository()
+    private val userRepo = UserRepository(db, app)
+    private val chatRepo = ChatRepository(db)
+    private val storageRepo = StorageRepository()
+    private val musicRepo = MusicRepository(db)
+    private val recorder = VoiceRecorder(app)
+
+    val voicePlayer = VoiceMessagePlayer(viewModelScope)
+    val music = MusicController(app, musicRepo, viewModelScope) { authRepo.currentUid }
+    val calls = CallManager(app, CallSignaling(db), viewModelScope)
+
+    var myUid by mutableStateOf<String?>(null)
+        private set
+    var profile by mutableStateOf<UserProfile?>(null)
+        private set
+    var messages by mutableStateOf<List<ChatMessage>>(emptyList())
+        private set
+    var connection by mutableStateOf(ConnectionStatus.CONNECTING)
+        private set
+    var uploadsInProgress by mutableIntStateOf(0)
+        private set
+    var showProfileSheet by mutableStateOf(false)
+        private set
+    var savingProfile by mutableStateOf(false)
+        private set
+    var recordingStartedAt by mutableStateOf<Long?>(null)
+        private set
+    var draft by mutableStateOf("")
+
+    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val events: Flow<String> = merge(_events, calls.messages)
+
+    private var networkUp = true
+    private var fromCache = true
+    private var pendingAction: (() -> Unit)? = null
+
+    init {
+        viewModelScope.launch {
+            app.networkAvailableFlow().collect {
+                networkUp = it
+                updateConnection()
+            }
+        }
+        viewModelScope.launch { signInLoop() }
+    }
+
+    // ---------- auth / startup ----------
+
+    private suspend fun signInLoop() {
+        var attempt = 0
+        var uid: String? = null
+        while (uid == null) {
+            try {
+                uid = authRepo.ensureSignedIn()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "anonymous sign-in failed", e)
+                attempt++
+                delay(min(30_000L, 2_000L * attempt))
+            }
+        }
+        myUid = uid
+        profile = userRepo.cached(uid)
+        updateConnection()
+        onSignedIn(uid)
+    }
+
+    private fun onSignedIn(uid: String) {
+        viewModelScope.launch {
+            runCatching { userRepo.fetch(uid) }.getOrNull()?.let { profile = it }
+        }
+        viewModelScope.launch {
+            var warned = false
+            chatRepo.observe()
+                .retryWhen { e, _ ->
+                    Log.w(TAG, "messages listener", e)
+                    if (!warned && e is FirebaseFirestoreException &&
+                        e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED
+                    ) {
+                        warned = true
+                        _events.tryEmit("Chat is locked. Deploy the Firestore rules from the project.")
+                    }
+                    delay(3000)
+                    true
+                }
+                .collect { snap ->
+                    messages = snap.messages
+                    fromCache = snap.fromCache
+                    updateConnection()
+                }
+        }
+        music.start()
+        calls.startListening(uid)
+    }
+
+    private fun updateConnection() {
+        connection = when {
+            !networkUp -> ConnectionStatus.OFFLINE
+            myUid == null || fromCache -> ConnectionStatus.CONNECTING
+            else -> ConnectionStatus.CONNECTED
+        }
+    }
+
+    // ---------- profile ----------
+
+    /** Returns true if the user can post; otherwise opens the profile sheet. */
+    fun ensureProfile(): Boolean {
+        if (myUid == null) {
+            _events.tryEmit("Connecting… try again in a moment")
+            return false
+        }
+        if (profile?.isComplete == true) return true
+        pendingAction = null
+        showProfileSheet = true
+        return false
+    }
+
+    private fun withProfile(action: (UserProfile) -> Unit) {
+        val p = profile
+        if (myUid == null) {
+            _events.tryEmit("Connecting… try again in a moment")
+            return
+        }
+        if (p != null && p.isComplete) {
+            action(p)
+        } else {
+            pendingAction = { profile?.let(action) }
+            showProfileSheet = true
+        }
+    }
+
+    fun openProfileEditor() {
+        pendingAction = null
+        showProfileSheet = true
+    }
+
+    fun dismissProfileSheet() {
+        if (savingProfile) return
+        showProfileSheet = false
+        pendingAction = null
+    }
+
+    fun saveProfile(name: String, photo: Uri?) {
+        val uid = myUid ?: return
+        val trimmed = name.trim().take(40)
+        val existingPhoto = profile?.photoUrl.orEmpty()
+        if (trimmed.isEmpty()) {
+            _events.tryEmit("Please enter your name")
+            return
+        }
+        if (photo == null && existingPhoto.isBlank()) {
+            _events.tryEmit("Please choose a photo")
+            return
+        }
+        savingProfile = true
+        viewModelScope.launch {
+            try {
+                val url = if (photo != null) {
+                    val bytes = withContext(Dispatchers.IO) { ImageUtils.avatar(getApplication(), photo) }
+                    storageRepo.uploadBytes(
+                        FirebasePaths.storagePath(uid, "profile", "avatar_${System.currentTimeMillis()}.jpg"),
+                        bytes, "image/jpeg",
+                    )
+                } else existingPhoto
+                val p = UserProfile(uid, trimmed, url)
+                userRepo.save(p)
+                profile = p
+                showProfileSheet = false
+                val action = pendingAction
+                pendingAction = null
+                action?.invoke()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "saveProfile", e)
+                _events.tryEmit("Couldn't save your profile. Check your connection.")
+            } finally {
+                savingProfile = false
+            }
+        }
+    }
+
+    // ---------- sending ----------
+
+    fun sendDraft() {
+        val text = draft.trim()
+        if (text.isEmpty()) return
+        draft = ""
+        withProfile { p ->
+            chatRepo.send(chatRepo.newId(), p, MessageType.TEXT, text = text.take(4000), onError = ::onSendError)
+        }
+    }
+
+    fun sendImage(uri: Uri) = withProfile { p ->
+        uploadAndSend(p, MessageType.IMAGE, "images", "jpg", "image/jpeg") { ImageUtils.chatImage(getApplication(), uri) }
+    }
+
+    fun sendSticker(uri: Uri) = withProfile { p ->
+        uploadAndSend(p, MessageType.STICKER, "stickers", "png", "image/png") { ImageUtils.sticker(getApplication(), uri) }
+    }
+
+    fun startRecording() {
+        if (!ensureProfile()) return
+        if (recorder.start()) {
+            voicePlayer.release()
+            recordingStartedAt = SystemClock.elapsedRealtime()
+        } else {
+            _events.tryEmit("Couldn't start the microphone")
+        }
+    }
+
+    fun cancelRecording() {
+        recorder.cancel()
+        recordingStartedAt = null
+    }
+
+    fun finishRecording() {
+        val rec = recorder.stop()
+        recordingStartedAt = null
+        if (rec == null) {
+            _events.tryEmit("Recording too short")
+            return
+        }
+        val p = profile ?: return
+        uploadAndSend(p, MessageType.VOICE, "voice", "m4a", "audio/mp4", durationMs = rec.durationMs) {
+            try {
+                rec.file.readBytes()
+            } finally {
+                rec.file.delete()
+            }
+        }
+    }
+
+    private fun uploadAndSend(
+        p: UserProfile,
+        type: String,
+        kind: String,
+        ext: String,
+        contentType: String,
+        durationMs: Long = 0L,
+        produce: suspend () -> ByteArray,
+    ) {
+        viewModelScope.launch {
+            uploadsInProgress++
+            try {
+                val bytes = withContext(Dispatchers.IO) { produce() }
+                val id = chatRepo.newId()
+                val path = FirebasePaths.storagePath(p.uid, kind, "$id.$ext")
+                val url = storageRepo.uploadBytes(path, bytes, contentType)
+                chatRepo.send(id, p, type, mediaUrl = url, mediaPath = path, durationMs = durationMs, onError = ::onSendError)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "upload failed", e)
+                _events.tryEmit("Upload failed. Check your connection.")
+            } finally {
+                uploadsInProgress--
+            }
+        }
+    }
+
+    private fun onSendError(e: Exception) {
+        Log.w(TAG, "send failed", e)
+        _events.tryEmit("Message was not accepted by the server")
+    }
+
+    // ---------- music ----------
+
+    fun addMusic(uri: Uri) = withProfile { p ->
+        viewModelScope.launch {
+            val info = withContext(Dispatchers.IO) { MediaUtils.queryAudio(getApplication(), uri) }
+            if (info == null) {
+                _events.tryEmit("Couldn't read that file")
+                return@launch
+            }
+            if (info.sizeBytes > MAX_MUSIC_BYTES) {
+                _events.tryEmit("That song is too large (max 20 MB)")
+                return@launch
+            }
+            uploadsInProgress++
+            try {
+                val id = musicRepo.newSongId()
+                val path = FirebasePaths.storagePath(p.uid, "music", "$id.${info.extension}")
+                val url = storageRepo.uploadFile(path, uri, info.mimeType)
+                musicRepo.addSong(id, info.title, url, path, p.uid, info.sizeBytes)
+                chatRepo.send(
+                    chatRepo.newId(), p, MessageType.MUSIC,
+                    text = info.title, mediaUrl = url, mediaPath = path, refId = id, onError = ::onSendError,
+                )
+                _events.tryEmit("Added \"${info.title}\"")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "music upload failed", e)
+                _events.tryEmit("Couldn't upload the song (max 20 MB, audio files only)")
+            } finally {
+                uploadsInProgress--
+            }
+        }
+    }
+
+    fun playSong(song: Song) = withProfile { music.play(song) }
+
+    fun playSongFromMessage(message: ChatMessage) {
+        val song = music.songs.value.firstOrNull { it.id == message.refId }
+            ?: Song(id = message.refId.ifBlank { message.id }, title = message.text, url = message.mediaUrl)
+        playSong(song)
+    }
+
+    fun toggleMusic() = withProfile { music.togglePlayPause() }
+
+    fun seekMusic(positionMs: Long) = withProfile { music.seekTo(positionMs) }
+
+    fun toggleMute() = music.toggleMute()
+
+    // ---------- calls ----------
+
+    fun startCall(video: Boolean) {
+        val p = profile ?: return
+        calls.startCall(p, video)
+    }
+
+    fun acceptCall() {
+        val p = profile ?: return
+        calls.accept(p)
+    }
+
+    override fun onCleared() {
+        recorder.cancel()
+        voicePlayer.release()
+        music.release()
+        calls.release()
+        super.onCleared()
+    }
+
+    private companion object {
+        const val TAG = "ChatViewModel"
+        const val MAX_MUSIC_BYTES = 20L * 1024 * 1024
+    }
+}

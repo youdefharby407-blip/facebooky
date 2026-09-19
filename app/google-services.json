@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "599270067557",
+    "project_id": "private-chat-80d8a",
+    "storage_bucket": "private-chat-80d8a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:599270067557:android:a90655e3952cd6e7b8258c",
+        "android_client_info": {
+          "package_name": "com.yousef.facebooky"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTdpJaWY36co5sXqUxvOLDsfgWpbS92BM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
