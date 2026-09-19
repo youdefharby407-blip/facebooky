@@ -21,8 +21,8 @@ service cloud.firestore {
     // True if the CURRENT user is a verified admin (flag set only via password, below).
     function isAdmin() {
       return signedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('admin', false) == true;
+        && exists(/databases/$(database)/documents/config/admin)
+        && get(/databases/$(database)/documents/config/admin).data.uid == request.auth.uid;
     }
     function roomData(roomId) { return get(/databases/$(database)/documents/rooms/$(roomId)).data; }
     function isRoomMember(roomId) {
@@ -42,21 +42,14 @@ service cloud.firestore {
       // Profile write (name + photo), plus optional presence/shortId/admin fields.
       // Keys are validated by presence; admin can only turn true with a valid password proof.
       allow create, update: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['name', 'photoUrl', 'updatedAt', 'shortId', 'lastSeen', 'device', 'region', 'language', 'admin', 'adminProof'])
+        && request.resource.data.keys().hasOnly(['name', 'photoUrl', 'updatedAt', 'shortId', 'lastSeen', 'device', 'region', 'language'])
         && (!('name' in request.resource.data) || (str(request.resource.data.name, 40) && request.resource.data.name.size() > 0))
         && (!('photoUrl' in request.resource.data) || httpsOrEmpty(request.resource.data.photoUrl))
         && (!('shortId' in request.resource.data) || str(request.resource.data.shortId, 12))
         && (!('device' in request.resource.data) || str(request.resource.data.device, 80))
         && (!('region' in request.resource.data) || str(request.resource.data.region, 60))
         && (!('language' in request.resource.data) || str(request.resource.data.language, 20))
-        && (
-          // admin stays absent/false, OR it becomes true with a matching password proof
-          !('admin' in request.resource.data)
-          || request.resource.data.admin == false
-          || (request.resource.data.admin == true
-              && 'adminProof' in request.resource.data
-              && proofOk(request.resource.data.adminProof))
-        );
+        ;
       allow delete: if isMe(uid);
     }
 
@@ -272,6 +265,20 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if signedIn() && blobMeta().ownerUid == request.auth.uid;
       }
+    }
+
+    // ---------- single global admin pointer ----------
+    // config/admin.uid = the one device that is currently admin. Setting it (with the password
+    // proof) makes this device admin and automatically demotes the previous one.
+    match /config/{docId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && docId == 'admin'
+        && request.resource.data.keys().hasOnly(['uid', 'proof', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && str(request.resource.data.proof, 64)
+        && request.resource.data.at == request.time
+        && proofOk(request.resource.data.proof);
+      allow delete: if false;
     }
 
     // ---------- admin / clear-chat password proof ----------

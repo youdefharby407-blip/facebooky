@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
+data class LobbySong(val title: String, val url: String, val sizeBytes: Long)
+
 class MusicRepository(db: FirebaseFirestore, roomId: String) {
 
     private val room = db.collection(FirebasePaths.ROOMS).document(roomId)
@@ -63,6 +65,16 @@ class MusicRepository(db: FirebaseFirestore, roomId: String) {
             )
         }
         awaitClose { reg.remove() }
+    }
+
+    /** One-shot fetch of the shared lobby's songs, to let a user copy some into a private room. */
+    suspend fun fetchLobbySongs(db: FirebaseFirestore): List<LobbySong> {
+        val snap = db.collection(FirebasePaths.ROOMS).document(FirebasePaths.MAIN_ROOM)
+            .collection(FirebasePaths.MUSIC).get().await()
+        return snap.documents.mapNotNull { d ->
+            val url = d.getString("url") ?: return@mapNotNull null
+            LobbySong(d.getString("title").orEmpty(), url, d.getLong("sizeBytes") ?: 0L)
+        }
     }
 
     suspend fun addSong(id: String, title: String, url: String, storagePath: String, uploaderUid: String, sizeBytes: Long) {

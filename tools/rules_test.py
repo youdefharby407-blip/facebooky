@@ -132,5 +132,21 @@ expect("carol leaves herself", room_patch("carol", "p_alice_bob", {"members": ar
 expect("send in my private room", write("alice", f"rooms/p_alice_bob/chat/pm1", msg("alice", "text", "hey"), "timestamp"), True)
 expect("stranger can't send in private room", write("dave", f"rooms/p_alice_bob/chat/pm2", msg("dave", "text", "x"), "timestamp"), False)
 
+# ----- single global admin -----
+def become_admin(uid, password, proof):
+    root = f"projects/{P}/databases/(default)/documents"
+    writes = [
+        {"update": {"name": f"{root}/clearAuth/{proof}", "fields": {"key": S(password), "by": S(uid)}},
+         "updateTransforms": [{"fieldPath": "at", "setToServerValue": "REQUEST_TIME"}]},
+        {"update": {"name": f"{root}/config/admin", "fields": {"uid": S(uid), "proof": S(proof)}},
+         "updateTransforms": [{"fieldPath": "at", "setToServerValue": "REQUEST_TIME"}]},
+    ]
+    return req("POST", f"{BASE}:commit", uid, {"writes": writes})
+expect("become admin right pw", become_admin("alice", "harby251581", "ap1"), True)
+expect("become admin wrong pw", become_admin("bob", "nope", "ap2"), False)
+expect("transfer admin to bob", become_admin("bob", "harby251581", "ap3"), True)
+expect("read admin pointer", req("GET", f"{BASE}/config/admin", "carol"), True)
+expect("fake admin no proof", write("carol", "config/admin", {"uid": S("carol")}, "at"), False)
+
 print("\nRESULT:", "ALL PASSED" if not failures else f"FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

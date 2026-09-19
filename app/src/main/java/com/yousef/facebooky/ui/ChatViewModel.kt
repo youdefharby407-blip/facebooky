@@ -96,8 +96,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     // ----- admin -----
+    /** True if THIS device is the single current admin (config/admin.uid == me). */
     var isAdmin by mutableStateOf(false)
         private set
+    /** Local switch: show my rainbow admin name on this device (only meaningful if I'm the admin). */
+    var adminBadgeOn by mutableStateOf(adminPrefs.getBoolean("badge", true))
+        private set
+    private var adminUidGlobal = ""
     /** This device's timezone id, to compare against other devices in the admin console. */
     val myRegion: String = java.util.TimeZone.getDefault().id
     var adminUsers by mutableStateOf<List<Presence>>(emptyList())
@@ -140,6 +145,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val hiddenPrefs = app.getSharedPreferences("hidden_messages", android.content.Context.MODE_PRIVATE)
     private val roomThemePrefs = app.getSharedPreferences("room_theme", android.content.Context.MODE_PRIVATE)
+    private val adminPrefs = app.getSharedPreferences("admin_local", android.content.Context.MODE_PRIVATE)
     private var hiddenIds: Set<String> = hiddenPrefs.getStringSet(HIDDEN_KEY, emptySet()).orEmpty().toSet()
     private var allMessages: List<ChatMessage> = emptyList()
     private var syncJob: Job? = null
@@ -188,7 +194,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (profile == null) viewModelScope.launch {
             runCatching { userRepo.fetch(uid) }.getOrNull()?.let {
                 if (profile == null) profile = it
-                if (it.isAdmin) isAdmin = true
             }
         }
         // Directory of everyone (names/photos) for avatars.
@@ -205,7 +210,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Make sure I have a short ID others can use to reach me.
         viewModelScope.launch {
-            runCatching { directory.ensureShortId(uid, profile?.shortId) }.getOrNull()?.let { myShortId = it }
+            var tries = 0
+            while (myShortId.isBlank() && tries < 20) {
+                val existing = people[uid]?.shortId?.takeIf { it.isNotBlank() } ?: profile?.shortId
+                val got = runCatching { directory.ensureShortId(uid, existing) }.getOrNull()
+                if (!got.isNullOrBlank()) {
+                    myShortId = got
+                    break
+                }
+                tries++
+                delay(4000)
+            }
         }
         // Presence heartbeat every ~30s so the admin can see who's online.
         viewModelScope.launch {
@@ -214,6 +229,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 admin.heartbeat(uid, deviceName, myRegion, lang)
                 delay(30_000)
             }
+        }
+        viewModelScope.launch {
+            admin.observeAdminUid()
+                .retryWhen { _, _ -> delay(5000); true }
+                .collect { adminUid ->
+                    adminUidGlobal = adminUid
+                    isAdmin = adminUid.isNotBlank() && adminUid == myUid
+                }
         }
         calls.startListening(uid)
         openRoomInternal(FirebasePaths.MAIN_ROOM, null)
@@ -361,7 +384,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- members / groups ----------
 
     fun showPersonCard(uid: String) {
-        infoCard = people[uid]?.copy(uid = uid) ?: peer?.takeIf { it.uid == uid }
+        if (uid.isBlank() || uid == myUid) return
+        // Best info we have right now (directory, peer, or the message's own sender fields).
+        val fromDir = people[uid]?.copy(uid = uid)
+        val fromPeer = peer?.takeIf { it.uid == uid }
+        val fromMsg = messages.lastOrNull { it.senderUid == uid }
+            ?.let { UserProfile(uid, it.senderName, it.senderPhoto) }
+        infoCard = fromDir ?: fromPeer ?: fromMsg ?: UserProfile(uid, "Unknown", "")
+        // If we don't yet know their public ID, fetch it in the background.
+        if (infoCard?.shortId.isNullOrBlank()) viewModelScope.launch {
+            runCatching { userRepo.fetch(uid) }.getOrNull()?.let { fetched ->
+                if (infoCard?.uid == uid) infoCard = infoCard?.copy(shortId = fetched.shortId, isAdmin = fetched.isAdmin,
+                    photoUrl = infoCard?.photoUrl?.takeIf { it.isNotBlank() } ?: fetched.photoUrl,
+                    name = infoCard?.name?.takeIf { it.isNotBlank() && it != "Unknown" } ?: fetched.name)
+            }
+        }
     }
 
     fun dismissPersonCard() { infoCard = null }
@@ -444,7 +481,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 "Couldn't verify"
             }
             if (error == null) {
-                isAdmin = true
+                adminBadgeOn = true
+                adminPrefs.edit().putBoolean("badge", true).apply()
                 openAdmin()
             }
             onDone(error)
@@ -623,7 +661,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** True if this uid is a verified admin (rainbow tag beside their messages). */
-    fun isAdminSender(uid: String): Boolean = people[uid]?.isAdmin == true || (uid == myUid && isAdmin)
+    fun isAdminSender(uid: String): Boolean {
+        if (uid == myUid) return isAdmin && adminBadgeOn
+        return uid == adminUidGlobal && adminUidGlobal.isNotBlank()
+    }
+
+    fun toggleAdminBadge() {
+        adminBadgeOn = !adminBadgeOn
+        adminPrefs.edit().putBoolean("badge", adminBadgeOn).apply()
+    }
 
     fun nameOf(m: ChatMessage): String = people[m.senderUid]?.name?.takeIf { it.isNotBlank() } ?: m.senderName
 
@@ -831,6 +877,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun seekMusic(positionMs: Long) = withProfile { music.seekTo(positionMs) }
 
     fun toggleMute() = music.toggleMute()
+
+    /** Lobby songs the user can pick from to add into the current private room. */
+    var lobbySongs by mutableStateOf<List<com.yousef.facebooky.data.LobbySong>>(emptyList())
+        private set
+
+    fun loadLobbySongs() {
+        viewModelScope.launch {
+            runCatching { musicRepo.fetchLobbySongs(db) }.getOrNull()?.let { lobbySongs = it }
+        }
+    }
+
+    /** Copies a chosen lobby song into the current room (same audio, no re-upload). */
+    fun importLobbySong(song: com.yousef.facebooky.data.LobbySong) = withProfile { p ->
+        viewModelScope.launch {
+            try {
+                val id = musicRepo.newSongId()
+                musicRepo.addSong(id, song.title, song.url, "", p.uid, song.sizeBytes)
+                _events.tryEmit("Added \"${song.title}\"")
+            } catch (e: Exception) {
+                _events.tryEmit("Couldn't add that song")
+            }
+        }
+    }
 
     /** Deletes a song for everyone (any user). "معاك قلبي" is protected and can't be removed. */
     fun deleteSong(song: Song) {

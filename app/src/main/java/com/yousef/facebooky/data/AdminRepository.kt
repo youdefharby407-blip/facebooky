@@ -31,21 +31,30 @@ class AdminRepository(private val db: FirebaseFirestore) {
         )
     }
 
+    private val adminDoc = db.collection("config").document("admin")
+
     /**
-     * Verifies the admin password and, if correct, flags this user as admin.
-     * Works because the rules only let users/{uid}.admin become true alongside a valid clearAuth proof.
+     * Verifies the admin password. If correct, this device becomes THE admin (single device):
+     * config/admin.uid is set to me, which automatically demotes any previous admin device.
+     * The rainbow tag / admin powers key off "am I config/admin.uid".
      */
     suspend fun becomeAdmin(uid: String, password: String) {
         val proof = db.collection(FirebasePaths.CLEAR_AUTH).document()
         db.batch()
             .set(proof, mapOf("key" to password, "by" to uid, "at" to com.google.firebase.firestore.FieldValue.serverTimestamp()))
-            .set(
-                db.collection(FirebasePaths.USERS).document(uid),
-                mapOf("admin" to true, "adminProof" to proof.id),
-                SetOptions.merge(),
-            )
+            .set(adminDoc, mapOf("uid" to uid, "proof" to proof.id,
+                "at" to com.google.firebase.firestore.FieldValue.serverTimestamp()))
             .commit()
             .await()
+    }
+
+    /** Live: which single uid is currently the admin ("" if none). */
+    fun observeAdminUid(): Flow<String> = callbackFlow {
+        val reg = adminDoc.addSnapshotListener { snap, e ->
+            if (e != null) { close(e); return@addSnapshotListener }
+            trySend(snap?.getString("uid").orEmpty())
+        }
+        awaitClose { reg.remove() }
     }
 
     /** ADMIN: every user/device known to the project. */

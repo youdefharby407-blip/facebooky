@@ -37,6 +37,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -273,6 +274,26 @@ fun AdminScreen(vm: ChatViewModel, onClose: () -> Unit) {
                 Text("Console", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
             LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                item {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Show my admin badge here", style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    if (vm.isAdmin) "This device is the admin. The rainbow ADMIN tag shows on your messages."
+                                    else "This device isn't the admin yet. Enter the password from the Welcome menu.",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(checked = vm.adminBadgeOn, onCheckedChange = { vm.toggleAdminBadge() })
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
                 item {
                     Text("All chats (${vm.adminRooms.size})", style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 8.dp))

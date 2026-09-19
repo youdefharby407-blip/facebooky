@@ -304,8 +304,64 @@ fun MusicSheet(vm: ChatViewModel, onAddMusic: () -> Unit, onDismiss: () -> Unit)
                 Spacer(Modifier.width(6.dp))
                 Text("Add Music")
             }
+            // In a private chat you can also pick songs from the shared lobby.
+            if (vm.roomId != "main") {
+                var showLobby by remember { mutableStateOf(false) }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { vm.loadLobbySongs(); showLobby = true },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) {
+                    Icon(Icons.Rounded.LibraryMusic, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Add from lobby")
+                }
+                if (showLobby) {
+                    LobbySongsDialog(
+                        songs = vm.lobbySongs,
+                        onPick = { vm.importLobbySong(it) },
+                        onClose = { showLobby = false },
+                    )
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun LobbySongsDialog(
+    songs: List<com.yousef.facebooky.data.LobbySong>,
+    onPick: (com.yousef.facebooky.data.LobbySong) -> Unit,
+    onClose: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Add from lobby") },
+        text = {
+            if (songs.isEmpty()) {
+                Text("No songs in the lobby yet, or still loading…")
+            } else {
+                Column(Modifier.fillMaxWidth()) {
+                    songs.forEach { song ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                .clickable { onPick(song); onClose() }
+                                .padding(vertical = 12.dp, horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Rounded.MusicNote, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(10.dp))
+                            Text(song.title.ifBlank { "Song" }, Modifier.weight(1f),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Rounded.Add, "Add")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Done") } },
+    )
 }
 
 /** Wide, touch-friendly seek bar: tap anywhere or drag the thumb. Shows current / total time. */

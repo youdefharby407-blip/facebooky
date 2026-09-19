@@ -14,6 +14,8 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
@@ -92,20 +94,33 @@ fun MessageItem(
     // Swipe a message sideways (like WhatsApp) to reply to it.
     val dragX = remember(message.id) { mutableFloatStateOf(0f) }
     val dragXAnim = animateFloatAsState(dragX.floatValue, label = "swipe")
+    val haptics = LocalHapticFeedback.current
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(top = if (showSender) 10.dp else 2.dp)
             .offset { IntOffset(dragXAnim.value.roundToInt(), 0) }
             .pointerInput(message.id) {
+                var total = 0f
+                var fired = false
                 detectHorizontalDragGestures(
+                    onDragStart = { total = 0f; fired = false },
                     onDragEnd = {
-                        if (kotlin.math.abs(dragX.floatValue) > 60f && message.type != MessageType.DELETED) onReply(message)
+                        if (!fired && kotlin.math.abs(dragX.floatValue) > 55f && message.type != MessageType.DELETED) {
+                            onReply(message)
+                        }
                         dragX.floatValue = 0f
                     },
                     onDragCancel = { dragX.floatValue = 0f },
-                ) { _, delta ->
-                    dragX.floatValue = (dragX.floatValue + delta).coerceIn(-140f, 140f)
+                ) { change, delta ->
+                    total += delta
+                    dragX.floatValue = (dragX.floatValue + delta).coerceIn(-150f, 150f)
+                    if (!fired && kotlin.math.abs(dragX.floatValue) > 55f && message.type != MessageType.DELETED) {
+                        fired = true
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onReply(message)
+                    }
+                    change.consume()
                 }
             },
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
