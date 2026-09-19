@@ -303,7 +303,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setRoomTheme(themeId: String) {
+    fun changeRoomTheme(themeId: String) {
         roomTheme = themeId
         if (roomId != FirebasePaths.MAIN_ROOM) directory.setRoomTheme(roomId, themeId, ::onSendError)
         else roomThemePrefs.edit().putString("main", themeId).apply()

@@ -26,10 +26,12 @@ service cloud.firestore {
     }
     function roomData(roomId) { return get(/databases/$(database)/documents/rooms/$(roomId)).data; }
     function isRoomMember(roomId) {
-      return roomId == 'main'
+      return signedIn() && (
+        roomId == 'main'
         || (exists(/databases/$(database)/documents/rooms/$(roomId))
             && request.auth.uid in roomData(roomId).members)
-        || isAdmin();
+        || isAdmin()
+      );
     }
 
     // ---------- users/{uid} : profile, short id, presence, admin flag ----------
@@ -37,17 +39,18 @@ service cloud.firestore {
       // Profiles are readable by any signed-in user (needed for avatars and ID lookup).
       allow read: if signedIn();
 
-      // Normal profile write (name + photo), plus optional presence/shortId fields.
+      // Profile write (name + photo), plus optional presence/shortId/admin fields.
+      // Keys are validated by presence; admin can only turn true with a valid password proof.
       allow create, update: if isMe(uid)
-        && request.resource.data.diff(resource.data == null ? {} : resource.data).affectedKeys()
-             .hasOnly(['name', 'photoUrl', 'updatedAt', 'shortId', 'lastSeen', 'device', 'admin', 'adminProof'])
+        && request.resource.data.keys().hasOnly(['name', 'photoUrl', 'updatedAt', 'shortId', 'lastSeen', 'device', 'admin', 'adminProof'])
         && (!('name' in request.resource.data) || (str(request.resource.data.name, 40) && request.resource.data.name.size() > 0))
         && (!('photoUrl' in request.resource.data) || httpsOrEmpty(request.resource.data.photoUrl))
         && (!('shortId' in request.resource.data) || str(request.resource.data.shortId, 12))
         && (!('device' in request.resource.data) || str(request.resource.data.device, 80))
-        // The admin flag can only turn true together with a valid password proof in the same batch.
         && (
-          !('admin' in request.resource.data.diff(resource.data == null ? {} : resource.data).affectedKeys())
+          // admin stays absent/false, OR it becomes true with a matching password proof
+          !('admin' in request.resource.data)
+          || request.resource.data.admin == false
           || (request.resource.data.admin == true
               && 'adminProof' in request.resource.data
               && proofOk(request.resource.data.adminProof))

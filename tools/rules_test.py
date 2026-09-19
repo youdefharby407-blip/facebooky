@@ -67,7 +67,7 @@ def anon_read():
     try:
         with urllib.request.urlopen(f"{BASE}/rooms/main/chat") as r: return r.status, ""
     except urllib.error.HTTPError as e: return e.code, e.read().decode()
-expect("unauthenticated read", anon_read(), False)
+expect("unauthenticated read", anon_read(), False)  # main lobby now requires sign-in
 
 def patch(uid, path, fields, mask):
     q = "&".join(f"updateMask.fieldPaths={m}" for m in mask)

@@ -290,7 +290,7 @@ fun ChatScreen(vm: ChatViewModel) {
         RoomsSheet(vm = vm, onDismiss = { showRooms = false })
     }
     if (showTheme) {
-        ThemeSheet(current = vm.roomTheme, onPick = { vm.setRoomTheme(it) }, onDismiss = { showTheme = false })
+        ThemeSheet(current = vm.roomTheme, onPick = { vm.changeRoomTheme(it) }, onDismiss = { showTheme = false })
     }
     if (showAdminLogin) {
         AdminLoginDialog(
