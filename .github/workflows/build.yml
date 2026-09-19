@@ -9,21 +9,33 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
 
+      # The Ubuntu runner already ships the Android SDK (ANDROID_HOME).
       - name: Build
         run: |
+          set -o pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          ./gradlew --no-daemon --stacktrace assembleDebug 2>&1 | tee build.log
+
+      - name: Publish build log
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f build.log ] || echo "no build log" > build.log
+          tail -c 900000 build.log > build-log.txt
+          gh release delete build-log --yes --cleanup-tag || true
+          gh release create build-log build-log.txt --prerelease --title "Build log" --notes "Run ${{ github.run_number }}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -36,4 +48,4 @@ jobs:
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk FaceBooky.apk
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest FaceBooky.apk --title "FaceBooky (latest build)" --notes "Build ${{ github.run_number }}"
+          gh release create latest FaceBooky.apk --latest --title "FaceBooky (latest build)" --notes "Build ${{ github.run_number }}"
