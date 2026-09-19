@@ -91,6 +91,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -114,6 +115,7 @@ fun ChatScreen(vm: ChatViewModel) {
 
     val permissions = rememberPermissionRequester()
     val keyboard = LocalSoftwareKeyboardController.current
+    val inputFocus = remember { FocusRequester() }
     var showAttach by remember { mutableStateOf(false) }
     var showMusic by rememberSaveable { mutableStateOf(false) }
     var showEmoji by remember { mutableStateOf(false) }
@@ -275,12 +277,19 @@ fun ChatScreen(vm: ChatViewModel) {
             )
 
             val replying = vm.replyingTo
+            LaunchedEffect(replying?.id) {
+                if (replying != null) {
+                    showEmoji = false
+                    inputFocus.requestFocus()
+                    keyboard?.show()
+                }
+            }
             AnimatedVisibility(replying != null, enter = expandVertically(), exit = shrinkVertically()) {
                 val m = replying ?: return@AnimatedVisibility
                 ReplyStrip(
                     name = if (m.senderUid == vm.myUid) "You" else vm.nameOf(m),
                     text = m.preview,
-                    onCancel = vm::cancelReply,
+                    onCancel = { vm.cancelReply(); keyboard?.hide() },
                 )
             }
 
@@ -290,16 +299,30 @@ fun ChatScreen(vm: ChatViewModel) {
                 onSend = vm::sendDraft,
                 emojiOpen = showEmoji,
                 onToggleEmoji = {
-                    showEmoji = !showEmoji
-                    if (showEmoji) keyboard?.hide() else keyboard?.show()
+                    if (showEmoji) {
+                        showEmoji = false
+                        inputFocus.requestFocus()
+                        keyboard?.show()
+                    } else {
+                        keyboard?.hide()
+                        showEmoji = true
+                    }
                 },
-                onAttach = { showAttach = true },
-                onMic = {
+                onAttach = { keyboard?.hide(); showEmoji = false; showAttach = true },
+                onMicStart = {
                     if (vm.ensureProfile()) permissions.request(arrayOf(Manifest.permission.RECORD_AUDIO)) { vm.startRecording() }
                 },
+                onMicRelease = vm::finishRecording,
+                onMicLock = vm::lockRecording,
+                onMicCancel = vm::cancelRecording,
                 recordingStartedAt = vm.recordingStartedAt,
+                recordingLocked = vm.recordingLocked,
+                recordingPaused = vm.recordingPaused,
+                onTogglePause = vm::toggleRecordingPause,
                 onCancelRecording = vm::cancelRecording,
                 onSendRecording = vm::finishRecording,
+                focusRequester = inputFocus,
+                onFocused = { showEmoji = false },
             )
             AnimatedVisibility(showEmoji, enter = expandVertically(), exit = shrinkVertically()) {
                 EmojiPanel(onEmoji = { vm.draft += it })

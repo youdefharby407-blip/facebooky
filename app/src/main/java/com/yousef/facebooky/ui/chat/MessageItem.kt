@@ -101,26 +101,23 @@ fun MessageItem(
             .padding(top = if (showSender) 10.dp else 2.dp)
             .offset { IntOffset(dragXAnim.value.roundToInt(), 0) }
             .pointerInput(message.id) {
-                var total = 0f
                 var fired = false
                 detectHorizontalDragGestures(
-                    onDragStart = { total = 0f; fired = false },
+                    onDragStart = { fired = false },
                     onDragEnd = {
-                        if (!fired && kotlin.math.abs(dragX.floatValue) > 55f && message.type != MessageType.DELETED) {
-                            onReply(message)
-                        }
                         dragX.floatValue = 0f
                     },
                     onDragCancel = { dragX.floatValue = 0f },
                 ) { change, delta ->
-                    total += delta
                     dragX.floatValue = (dragX.floatValue + delta).coerceIn(-150f, 150f)
-                    if (!fired && kotlin.math.abs(dragX.floatValue) > 55f && message.type != MessageType.DELETED) {
+                    val d = dragX.floatValue
+                    if (!fired && message.type != MessageType.DELETED && kotlin.math.abs(d) > 55f) {
+                        // Toward the phone edge (wall) = react; toward the center (outward) = reply.
+                        val towardWall = if (isMine) d > 0 else d < 0
                         fired = true
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onReply(message)
-                    }
-                    change.consume()
+                        if (towardWall) onLongPress(message) else onReply(message)
+                    }                    change.consume()
                 }
             },
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,

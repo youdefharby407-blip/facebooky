@@ -128,6 +128,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var recordingStartedAt by mutableStateOf<Long?>(null)
         private set
+    /** True once the user lifts into hands-free (locked) recording. */
+    var recordingLocked by mutableStateOf(false)
+        private set
+    var recordingPaused by mutableStateOf(false)
+        private set
     var draft by mutableStateOf("")
     /** Everyone's live name + photo (uid -> profile). */
     var people by mutableStateOf<Map<String, UserProfile>>(emptyMap())
@@ -752,6 +757,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (recorder.start()) {
             voicePlayer.release()
             recordingStartedAt = SystemClock.elapsedRealtime()
+            recordingLocked = false
+            recordingPaused = false
         } else {
             _events.tryEmit("Couldn't start the microphone")
         }
@@ -760,11 +767,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelRecording() {
         recorder.cancel()
         recordingStartedAt = null
+        recordingLocked = false
+        recordingPaused = false
+    }
+
+    /** Lifts into hands-free recording (finger released while dragged up). */
+    fun lockRecording() {
+        if (recordingStartedAt != null) recordingLocked = true
+    }
+
+    /** Pause/resume while locked. */
+    fun toggleRecordingPause() {
+        if (recordingStartedAt == null) return
+        recordingPaused = recorder.setPaused(!recordingPaused)
     }
 
     fun finishRecording() {
         val rec = recorder.stop()
         recordingStartedAt = null
+        recordingLocked = false
+        recordingPaused = false
         if (rec == null) {
             _events.tryEmit("Recording too short")
             return

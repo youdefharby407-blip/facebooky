@@ -31,6 +31,7 @@ class VoiceRecorder(private val context: Context) {
             recorder = r
             output = file
             startedAt = SystemClock.elapsedRealtime()
+            paused = false; pausedAccumMs = 0L
             true
         } catch (e: Exception) {
             r.release()
@@ -43,7 +44,8 @@ class VoiceRecorder(private val context: Context) {
     fun stop(): Recording? {
         val r = recorder ?: return null
         val file = output
-        val duration = SystemClock.elapsedRealtime() - startedAt
+        val extraPause = pausedAccumMs + (if (paused) SystemClock.elapsedRealtime() - pauseStartedAt else 0L)
+        val duration = SystemClock.elapsedRealtime() - startedAt - extraPause
         recorder = null
         output = null
         val ok = try {
@@ -61,6 +63,23 @@ class VoiceRecorder(private val context: Context) {
         return Recording(file, duration)
     }
 
+    private var paused = false
+    private var pausedAccumMs = 0L
+    private var pauseStartedAt = 0L
+
+    /** Pause/resume (API 24+). Returns the new paused state. */
+    fun setPaused(pause: Boolean): Boolean {
+        val r = recorder ?: return paused
+        try {
+            if (pause && !paused) {
+                r.pause(); paused = true; pauseStartedAt = SystemClock.elapsedRealtime()
+            } else if (!pause && paused) {
+                r.resume(); paused = false; pausedAccumMs += SystemClock.elapsedRealtime() - pauseStartedAt
+            }
+        } catch (e: Exception) { /* ignore */ }
+        return paused
+    }
+
     fun cancel() {
         recorder?.let {
             runCatching { it.stop() }
@@ -69,6 +88,7 @@ class VoiceRecorder(private val context: Context) {
         recorder = null
         output?.delete()
         output = null
+        paused = false; pausedAccumMs = 0L
     }
 
     @Suppress("DEPRECATION")

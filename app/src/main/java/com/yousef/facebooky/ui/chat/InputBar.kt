@@ -53,6 +53,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yousef.facebooky.util.formatTime
@@ -66,10 +76,18 @@ fun InputBar(
     emojiOpen: Boolean,
     onToggleEmoji: () -> Unit,
     onAttach: () -> Unit,
-    onMic: () -> Unit,
+    onMicStart: () -> Unit,
+    onMicRelease: () -> Unit,   // released without lock/cancel -> send
+    onMicLock: () -> Unit,      // dragged up -> hands-free
+    onMicCancel: () -> Unit,    // dragged left -> discard
     recordingStartedAt: Long?,
+    recordingLocked: Boolean,
+    recordingPaused: Boolean,
+    onTogglePause: () -> Unit,
     onCancelRecording: () -> Unit,
     onSendRecording: () -> Unit,
+    focusRequester: FocusRequester,
+    onFocused: () -> Unit,
 ) {
     Surface(color = BarColor, contentColor = MaterialTheme.colorScheme.onSurface) {
         AnimatedContent(
@@ -78,7 +96,11 @@ fun InputBar(
             label = "inputMode",
         ) { startedAt ->
             if (startedAt != null) {
-                RecordingRow(startedAt, onCancelRecording, onSendRecording)
+                if (recordingLocked) {
+                    LockedRecordingRow(startedAt, recordingPaused, onTogglePause, onCancelRecording, onSendRecording)
+                } else {
+                    HoldingRow(startedAt)
+                }
             } else {
                 Row(
                     Modifier
@@ -108,15 +130,20 @@ fun InputBar(
                             textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             maxLines = 5,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester)
+                                .onFocusChanged { if (it.isFocused) onFocused() },
                         )
                     }
                     Spacer(Modifier.width(6.dp))
                     val hasText = text.isNotBlank()
-                    FilledIconButton(onClick = if (hasText) onSend else onMic, modifier = Modifier.size(44.dp)) {
-                        AnimatedContent(targetState = hasText, label = "sendMic") { send ->
-                            if (send) Icon(AppIcons.Send, "Send", Modifier.size(20.dp)) else Icon(AppIcons.Mic, "Voice message", Modifier.size(22.dp))
+                    if (hasText) {
+                        FilledIconButton(onClick = onSend, modifier = Modifier.size(44.dp)) {
+                            Icon(AppIcons.Send, "Send", Modifier.size(20.dp))
                         }
+                    } else {
+                        HoldMicButton(onMicStart, onMicRelease, onMicLock, onMicCancel)
                     }
                     Spacer(Modifier.width(4.dp))
                 }
@@ -126,37 +153,100 @@ fun InputBar(
 }
 
 @Composable
-private fun RecordingRow(startedAt: Long, onCancel: () -> Unit, onSend: () -> Unit) {
-    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    LaunchedEffect(startedAt) {
-        while (true) {
-            now = SystemClock.elapsedRealtime()
-            delay(200)
-        }
+private fun HoldMicButton(
+    onStart: () -> Unit,
+    onRelease: () -> Unit,
+    onLock: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    onStart()
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    var decided = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        val dx = change.position.x - down.position.x
+                        val dy = change.position.y - down.position.y
+                        if (!decided) {
+                            if (dx < -90f) { decided = true; onCancel(); break }        // slide left = cancel
+                            if (dy < -90f) { decided = true; onLock(); break }           // slide up = hands-free
+                        }
+                        if (change.changedToUp()) { onRelease(); return@awaitEachGesture } // release = send
+                        change.consume()
+                    }
+                    // If we broke out on cancel/lock, wait for the finger to lift quietly.
+                    if (decided) {
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            if (c.changedToUp()) break
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(AppIcons.Mic, "Hold to record", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
     }
+}
+
+/** Shown while the finger is held down (before locking). */
+@Composable
+private fun HoldingRow(startedAt: Long) {
+    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(startedAt) { while (true) { now = SystemClock.elapsedRealtime(); delay(200) } }
     val pulse by rememberInfiniteTransition(label = "rec").animateFloat(
-        initialValue = 0.3f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "recDot",
+        0.3f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "recDot",
     )
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onCancel) { Icon(AppIcons.Trash, "Cancel", tint = MaterialTheme.colorScheme.error) }
-        Box(
-            Modifier
-                .size(10.dp)
-                .alpha(pulse)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.error)
-        )
+        Box(Modifier.size(10.dp).alpha(pulse).clip(CircleShape).background(MaterialTheme.colorScheme.error))
         Spacer(Modifier.width(10.dp))
         Text(formatTime(now - startedAt), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.weight(1f))
-        Text("Recording…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.width(12.dp))
+        Text("← slide to cancel  ·  slide up to lock ↑",
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Hands-free recording: pause/resume, delete, send. */
+@Composable
+private fun LockedRecordingRow(
+    startedAt: Long,
+    paused: Boolean,
+    onTogglePause: () -> Unit,
+    onCancel: () -> Unit,
+    onSend: () -> Unit,
+) {
+    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(startedAt, paused) { while (!paused) { now = SystemClock.elapsedRealtime(); delay(200) } }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onCancel) { Icon(AppIcons.Trash, "Delete", tint = MaterialTheme.colorScheme.error) }
+        if (!paused) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(formatTime(now - startedAt), style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = onTogglePause) {
+            Icon(if (paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                if (paused) "Resume" else "Pause", Modifier.size(26.dp))
+        }
+        Spacer(Modifier.width(6.dp))
         FilledIconButton(onClick = onSend, modifier = Modifier.size(44.dp)) { Icon(AppIcons.Send, "Send voice", Modifier.size(20.dp)) }
         Spacer(Modifier.width(4.dp))
     }
