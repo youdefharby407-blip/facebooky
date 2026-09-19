@@ -34,6 +34,8 @@ import com.yousef.facebooky.util.networkAvailableFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -380,10 +382,27 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         refreshVisible()
     }
 
-    /** Clears the chat for everyone (requires a profile). */
-    fun clearChatForEveryone() = withProfile { p ->
-        replyingTo = null
-        chatRepo.clearForEveryone(p.uid, ::onSendError)
+    /** Clears the chat for everyone. [onDone] gets null on success, or an error message. */
+    fun clearChatForEveryone(password: String, onDone: (String?) -> Unit) {
+        val uid = myUid ?: return onDone("Connecting… try again in a moment")
+        if (!networkUp) return onDone("You're offline")
+        viewModelScope.launch {
+            val error = try {
+                withTimeout(15_000) { chatRepo.clearForEveryone(uid, password.trim()) }
+                null
+            } catch (e: CancellationException) {
+                if (e is TimeoutCancellationException) "No connection. Try again." else throw e
+            } catch (e: FirebaseFirestoreException) {
+                if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) "Wrong password" else "Couldn't clear the chat. Try again."
+            } catch (e: Exception) {
+                "Couldn't clear the chat. Try again."
+            }
+            if (error == null) {
+                replyingTo = null
+                _events.tryEmit("Chat cleared for everyone")
+            }
+            onDone(error)
+        }
     }
 
     fun sendImage(uri: Uri) = withProfile { p ->

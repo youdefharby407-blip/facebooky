@@ -1,6 +1,11 @@
 package com.yousef.facebooky.ui.chat
 
 import android.Manifest
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.Image
@@ -135,25 +140,24 @@ fun ChatScreen(vm: ChatViewModel) {
         permissions.request(perms) { vm.startCall(video) }
     }
 
-    confirmClear?.let { mode ->
-        AlertDialog(
+    when (confirmClear) {
+        ClearMode.ME -> AlertDialog(
             onDismissRequest = { confirmClear = null },
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            title = { Text(if (mode == ClearMode.ME) "Clear chat for you?" else "Clear chat for everyone?") },
-            text = {
-                Text(
-                    if (mode == ClearMode.ME) "All current messages disappear on this phone only. Others still see them."
-                    else "All current messages disappear for everyone in My Space. This can't be undone."
-                )
-            },
+            title = { Text("Clear chat for you?") },
+            text = { Text("All current messages disappear on this phone only. Others still see them.") },
             confirmButton = {
-                TextButton(onClick = {
-                    if (mode == ClearMode.ME) vm.clearChatForMe() else vm.clearChatForEveryone()
-                    confirmClear = null
-                }) { Text("Clear", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { vm.clearChatForMe(); confirmClear = null }) {
+                    Text("Clear", color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = { TextButton(onClick = { confirmClear = null }) { Text("Cancel") } },
         )
+        ClearMode.EVERYONE -> ClearForEveryoneDialog(
+            onClear = vm::clearChatForEveryone,
+            onClose = { confirmClear = null },
+        )
+        null -> Unit
     }
 
     actionsFor?.let { m ->
@@ -592,3 +596,49 @@ private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit, dan
 }
 
 private enum class ClearMode { ME, EVERYONE }
+
+@Composable
+private fun ClearForEveryoneDialog(onClear: (String, (String?) -> Unit) -> Unit, onClose: () -> Unit) {
+    var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onClose() },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Clear chat for everyone?") },
+        text = {
+            Column {
+                Text("All messages disappear for everyone. Enter the admin password to continue.")
+                Spacer(Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; error = null },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    isError = error != null,
+                    supportingText = error?.let { { Text(it) } },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = password.isNotBlank() && !busy,
+                onClick = {
+                    busy = true
+                    onClear(password) { result ->
+                        busy = false
+                        if (result == null) onClose() else error = result
+                    }
+                },
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text("Clear for everyone", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("Cancel") } },
+    )
+}

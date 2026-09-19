@@ -13,10 +13,11 @@ import com.yousef.facebooky.data.model.UserProfile
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.tasks.await
 
 data class MessagesSnapshot(val messages: List<ChatMessage>, val fromCache: Boolean)
 
-class ChatRepository(db: FirebaseFirestore) {
+class ChatRepository(private val db: FirebaseFirestore) {
 
     /** rooms/main/state/chat -> clearedAt: messages older than this are hidden for everyone. */
     private val chatState = db.collection(FirebasePaths.ROOMS)
@@ -38,9 +39,17 @@ class ChatRepository(db: FirebaseFirestore) {
         awaitClose { reg.remove() }
     }
 
-    fun clearForEveryone(uid: String, onError: (Exception) -> Unit) {
-        chatState.set(mapOf("clearedAt" to FieldValue.serverTimestamp(), "clearedBy" to uid))
-            .addOnFailureListener(onError)
+    /**
+     * Clears the chat for everyone. The server only accepts it with the right password:
+     * the password goes into a write-only clearAuth document in the same batch, checked by the rules.
+     */
+    suspend fun clearForEveryone(uid: String, password: String) {
+        val proof = db.collection("clearAuth").document()
+        db.batch()
+            .set(proof, mapOf("key" to password, "by" to uid, "at" to FieldValue.serverTimestamp()))
+            .set(chatState, mapOf("clearedAt" to FieldValue.serverTimestamp(), "clearedBy" to uid, "proof" to proof.id))
+            .commit()
+            .await()
     }
 
     private val messages = db.collection(FirebasePaths.ROOMS)

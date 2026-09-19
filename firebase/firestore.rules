@@ -109,11 +109,16 @@ service cloud.firestore {
       match /state/{docId} {
         allow read: if signedIn();
         // "Clear chat for everyone": hides every message older than clearedAt.
+        // Needs the admin password: in the SAME batch the user must create clearAuth/{proof},
+        // which only succeeds with the right password (see /clearAuth below).
         allow create, update: if signedIn()
           && roomId == 'main' && docId == 'chat'
-          && request.resource.data.keys().hasOnly(['clearedAt', 'clearedBy'])
+          && request.resource.data.keys().hasOnly(['clearedAt', 'clearedBy', 'proof'])
           && request.resource.data.clearedAt == request.time
-          && request.resource.data.clearedBy == request.auth.uid;
+          && request.resource.data.clearedBy == request.auth.uid
+          && str(request.resource.data.proof, 64)
+          && getAfter(/databases/$(database)/documents/clearAuth/$(request.resource.data.proof)).data.by == request.auth.uid
+          && getAfter(/databases/$(database)/documents/clearAuth/$(request.resource.data.proof)).data.at == request.time;
         allow create, update: if signedIn()
           && roomId == 'main' && docId == 'player'
           && request.resource.data.keys().hasOnly(['songId', 'songTitle', 'songUrl', 'playing', 'positionMs', 'updatedAt', 'updatedBy'])
@@ -219,6 +224,20 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if signedIn() && blobMeta().ownerUid == request.auth.uid;
       }
+    }
+
+    // ---------- password check for "clear chat for everyone" ----------
+    // Only the SHA-256 of the password is here; the password itself is not in the app.
+    // Nobody can read these documents from the app.
+    match /clearAuth/{proofId} {
+      allow read: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['key', 'by', 'at'])
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.at == request.time
+        && request.resource.data.key is string && request.resource.data.key.size() <= 100
+        && hashing.sha256(request.resource.data.key).toHexString().lower() == '525e48565d00d12b537037ebbe0d8b7f6718e9d5b67172e9c913aea3b6c43a13';
+      allow update, delete: if false;
     }
 
     // Everything else is closed.

@@ -94,10 +94,21 @@ expect("author deletes for everyone", delete_all("alice", "rooms/main/chat/d1"),
 expect("no reactions on deleted", patch("bob", "rooms/main/chat/d1", {"reactions": {"mapValue": {"fields": {"bob": S("❤️")}}}}, ["reactions.bob"]), False)
 expect("old 'messages' collection closed", req("GET", f"{BASE}/rooms/main/messages", "carol"), False)
 
-expect("clear chat for everyone", write("bob", "rooms/main/state/chat", {"clearedBy": S("bob")}, "clearedAt"), True)
-expect("clear chat as someone else", write("bob", "rooms/main/state/chat", {"clearedBy": S("alice")}, "clearedAt"), False)
-expect("clear chat with fake time", write("bob", "rooms/main/state/chat", {"clearedBy": S("bob"),
-        "clearedAt": {"timestampValue": "2020-01-01T00:00:00Z"}}), False)
+def clear_batch(uid, password, proof):
+    root = f"projects/{P}/databases/(default)/documents"
+    writes = [
+        {"update": {"name": f"{root}/clearAuth/{proof}", "fields": {"key": S(password), "by": S(uid)}},
+         "updateTransforms": [{"fieldPath": "at", "setToServerValue": "REQUEST_TIME"}]},
+        {"update": {"name": f"{root}/rooms/main/state/chat", "fields": {"clearedBy": S(uid), "proof": S(proof)}},
+         "updateTransforms": [{"fieldPath": "clearedAt", "setToServerValue": "REQUEST_TIME"}]},
+    ]
+    return req("POST", f"{BASE}:commit", uid, {"writes": writes})
+expect("clear with right password", clear_batch("bob", "harby251581", "proof1"), True)
+expect("clear with wrong password", clear_batch("bob", "12345", "proof2"), False)
+expect("clear without password", write("bob", "rooms/main/state/chat", {"clearedBy": S("bob")}, "clearedAt"), False)
+expect("clear reusing someone's proof", write("carol", "rooms/main/state/chat", {"clearedBy": S("carol"), "proof": S("proof1")}, "clearedAt"), False)
+expect("reuse own old proof later", write("bob", "rooms/main/state/chat", {"clearedBy": S("bob"), "proof": S("proof1")}, "clearedAt"), False)
+expect("password docs unreadable", req("GET", f"{BASE}/clearAuth/proof1", "bob"), False)
 
 print("\nRESULT:", "ALL PASSED" if not failures else f"FAILED: {failures}")
 raise SystemExit(1 if failures else 0)
