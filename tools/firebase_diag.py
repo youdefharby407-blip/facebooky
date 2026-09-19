@@ -40,8 +40,18 @@ commit = {"writes": [{
 call("firestore write users/{uid}", "POST",
      f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents:commit", commit, A)
 call("firestore delete users/{uid}", "DELETE", f"{base}/users/{uid}", headers=A)
-obj = urllib.parse.quote(f"media/{uid}/profile/diag.jpg", safe="")
-FA = {"Authorization": f"Firebase {tok}"}
-call("storage upload", "POST", f"https://firebasestorage.googleapis.com/v0/b/{BUCKET}/o?name={obj}",
-     headers=dict(FA, **{"Content-Type": "image/jpeg"}), raw=b"\xff\xd8\xff\xe0diag")
-call("storage delete", "DELETE", f"https://firebasestorage.googleapis.com/v0/b/{BUCKET}/o/{obj}", headers=FA)
+import base64, random, string
+bid = "diag" + "".join(random.choice(string.ascii_letters) for _ in range(16))
+def blobwrite(name, path, fields, ts=None):
+    w = {"update": {"name": f"projects/{PROJECT}/databases/(default)/documents/{path}", "fields": fields}}
+    if ts: w["updateTransforms"] = [{"fieldPath": ts, "setToServerValue": "REQUEST_TIME"}]
+    call(name, "POST", f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents:commit", {"writes": [w]}, A)
+blobwrite("blob meta (music 5MB)", f"blobs/{bid}", {"ownerUid": {"stringValue": uid}, "kind": {"stringValue": "music"},
+          "mime": {"stringValue": "audio/mpeg"}, "size": {"integerValue": "5000000"}, "chunks": {"integerValue": "6"}}, "createdAt")
+blobwrite("blob chunk 0 (900KB)", f"blobs/{bid}/chunks/0", {"i": {"integerValue": "0"},
+          "data": {"bytesValue": base64.b64encode(b"x" * 900000).decode()}})
+call("blob chunk read", "GET", f"{base}/blobs/{bid}/chunks/0?mask.fieldPaths=i", headers=A)
+call("cleanup chunk", "DELETE", f"{base}/blobs/{bid}/chunks/0", headers=A)
+call("cleanup blob", "DELETE", f"{base}/blobs/{bid}", headers=A)
+call("list songs", "GET", f"{base}/rooms/main/music?pageSize=20", headers=A)
+call("list blobs (kind/size)", "GET", f"{base}/blobs?pageSize=50&mask.fieldPaths=kind&mask.fieldPaths=size&mask.fieldPaths=chunks&mask.fieldPaths=ownerUid", headers=A)
