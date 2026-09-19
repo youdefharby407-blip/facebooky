@@ -117,7 +117,8 @@ fun MessageItem(
                         fired = true
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (towardWall) onLongPress(message) else onReply(message)
-                    }                    change.consume()
+                    }
+                    change.consume()
                 }
             },
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
