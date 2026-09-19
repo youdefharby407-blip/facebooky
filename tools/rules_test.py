@@ -116,6 +116,9 @@ def room_write(uid, roomId, fields, transforms=None):
     w = {"update": {"name": f"{root}/rooms/{roomId}", "fields": fields}}
     if transforms: w["updateTransforms"] = transforms
     return req("POST", f"{BASE}:commit", uid, {"writes": [w]})
+def room_patch(uid, roomId, fields):
+    mask = "&".join(f"updateMask.fieldPaths={k}" for k in fields.keys())
+    return req("PATCH", f"{BASE}/rooms/{roomId}?{mask}&currentDocument.exists=true", uid, {"fields": fields})
 def arr(*vals): return {"arrayValue": {"values": [S(v) for v in vals]}}
 RID = "p_alice_bob"
 expect("create private room", room_write("alice", RID, {"members": arr("alice", "bob")},

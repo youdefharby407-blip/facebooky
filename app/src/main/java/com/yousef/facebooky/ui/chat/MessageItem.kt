@@ -91,12 +91,12 @@ fun MessageItem(
     val longPress = { onLongPress(message) }
     // Swipe a message sideways (like WhatsApp) to reply to it.
     val dragX = remember(message.id) { mutableFloatStateOf(0f) }
-    val dragXAnim by animateFloatAsState(dragX.floatValue, label = "swipe")
+    val dragXAnim = animateFloatAsState(dragX.floatValue, label = "swipe")
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(top = if (showSender) 10.dp else 2.dp)
-            .offset { IntOffset(dragXAnim.roundToInt(), 0) }
+            .offset { IntOffset(dragXAnim.value.roundToInt(), 0) }
             .pointerInput(message.id) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
