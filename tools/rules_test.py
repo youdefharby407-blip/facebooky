@@ -124,6 +124,11 @@ RID = "p_alice_bob"
 expect("create private room", room_write("alice", RID, {"members": arr("alice", "bob")},
         [{"fieldPath": "createdAt", "setToServerValue": "REQUEST_TIME"}, {"fieldPath": "lastActivity", "setToServerValue": "REQUEST_TIME"}]), True)
 expect("member reads room", req("GET", f"{BASE}/rooms/{RID}", "bob"), True)
+def list_my_rooms(uid):
+    body = {"structuredQuery": {"from": [{"collectionId": "rooms"}],
+        "where": {"fieldFilter": {"field": {"fieldPath": "members"}, "op": "ARRAY_CONTAINS", "value": S(uid)}}}}
+    return req("POST", f"{BASE}:runQuery", uid, body)
+expect("member lists own rooms (query)", list_my_rooms("bob"), True)
 expect("stranger can't read room", req("GET", f"{BASE}/rooms/{RID}", "carol"), False)
 expect("member adds a member", room_patch("alice", RID, {"members": arr("alice", "bob", "carol")}), True)
 expect("member sets background", room_patch("bob", "p_alice_bob", {"background": S("blob:abcdefghij1234567890")}), True)

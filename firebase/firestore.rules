@@ -66,7 +66,13 @@ service cloud.firestore {
     // ---------- rooms ----------
     match /rooms/{roomId} {
       // Members (and admins) read a room; the shared lobby "main" is readable by all.
-      allow read: if isRoomMember(roomId);
+      // NOTE: uses resource.data (not get()) so that list queries like
+      // whereArrayContains("members", uid) are allowed.
+      allow read: if signedIn() && (
+        roomId == 'main'
+        || (resource != null && request.auth.uid in resource.data.members)
+        || isAdmin()
+      );
 
       // Create/lastActivity/theme on a private room by one of its two members.
       allow create: if signedIn() && roomId != 'main'
