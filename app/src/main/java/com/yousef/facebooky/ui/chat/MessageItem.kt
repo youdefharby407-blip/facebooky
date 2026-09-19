@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.yousef.facebooky.ui.chat
 
 import androidx.compose.foundation.BorderStroke
