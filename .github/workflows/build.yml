@@ -39,13 +39,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: FaceBooky-debug-apk
+          name: MySpace-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Publish APK as release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk FaceBooky.apk
+          cp app/build/outputs/apk/debug/app-debug.apk MySpace.apk
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest FaceBooky.apk --latest --title "FaceBooky (latest build)" --notes "Build ${{ github.run_number }}"
+          gh release create latest MySpace.apk --latest --title "My Space (latest build)" --notes "Build ${{ github.run_number }}"
