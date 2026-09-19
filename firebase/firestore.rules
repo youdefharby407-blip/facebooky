@@ -1,42 +1,89 @@
 rules_version = '2';
 
-// FaceBooky - Firestore security rules
-// Every user is signed in with Firebase Anonymous Auth, so request.auth != null
-// means "a FaceBooky install that signed in". Nothing is public.
+// My Space - Firestore security rules
+// Everyone signs in with Firebase Anonymous Auth. request.auth != null = a real install.
+// Nothing is public. Media lives in Firestore (no paid Storage bucket).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
     function isMe(uid) { return signedIn() && request.auth.uid == uid; }
     function str(v, maxLen) { return v is string && v.size() <= maxLen; }
-    // A media reference: "" (none), a file stored in Firestore ("blob:<id>") or an https URL.
     function httpsOrEmpty(v) {
       return v is string && v.size() <= 2048
         && (v == '' || v.matches('^blob:[A-Za-z0-9]{10,40}$') || v.matches('^https://.*'));
     }
+    // The password proof written in the same batch (SHA-256 checked, see /clearAuth).
+    function proofOk(proofId) {
+      return getAfter(/databases/$(database)/documents/clearAuth/$(proofId)).data.by == request.auth.uid
+          && getAfter(/databases/$(database)/documents/clearAuth/$(proofId)).data.at == request.time;
+    }
+    // True if the CURRENT user is a verified admin (flag set only via password, below).
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('admin', false) == true;
+    }
+    function roomData(roomId) { return get(/databases/$(database)/documents/rooms/$(roomId)).data; }
+    function isRoomMember(roomId) {
+      return roomId == 'main'
+        || (exists(/databases/$(database)/documents/rooms/$(roomId))
+            && request.auth.uid in roomData(roomId).members)
+        || isAdmin();
+    }
 
-    // ---------- users/{uid} : profile (name + photo) ----------
+    // ---------- users/{uid} : profile, short id, presence, admin flag ----------
     match /users/{uid} {
+      // Profiles are readable by any signed-in user (needed for avatars and ID lookup).
       allow read: if signedIn();
+
+      // Normal profile write (name + photo), plus optional presence/shortId fields.
       allow create, update: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['name', 'photoUrl', 'updatedAt'])
-        && str(request.resource.data.name, 40) && request.resource.data.name.size() > 0
-        && httpsOrEmpty(request.resource.data.photoUrl)
-        && request.resource.data.updatedAt == request.time;
+        && request.resource.data.diff(resource.data == null ? {} : resource.data).affectedKeys()
+             .hasOnly(['name', 'photoUrl', 'updatedAt', 'shortId', 'lastSeen', 'device', 'admin', 'adminProof'])
+        && (!('name' in request.resource.data) || (str(request.resource.data.name, 40) && request.resource.data.name.size() > 0))
+        && (!('photoUrl' in request.resource.data) || httpsOrEmpty(request.resource.data.photoUrl))
+        && (!('shortId' in request.resource.data) || str(request.resource.data.shortId, 12))
+        && (!('device' in request.resource.data) || str(request.resource.data.device, 80))
+        // The admin flag can only turn true together with a valid password proof in the same batch.
+        && (
+          !('admin' in request.resource.data.diff(resource.data == null ? {} : resource.data).affectedKeys())
+          || (request.resource.data.admin == true
+              && 'adminProof' in request.resource.data
+              && proofOk(request.resource.data.adminProof))
+        );
       allow delete: if isMe(uid);
     }
 
-    match /rooms/{roomId} {
+    // ---------- shortIds/{id} : public directory (reserve once, never steal) ----------
+    match /shortIds/{shortId} {
       allow read: if signedIn();
-      allow write: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false; // an id, once taken, is permanent
+    }
+
+    // ---------- rooms ----------
+    match /rooms/{roomId} {
+      // Members (and admins) read a room; the shared lobby "main" is readable by all.
+      allow read: if isRoomMember(roomId);
+
+      // Create/lastActivity/theme on a private room by one of its two members.
+      allow create: if signedIn() && roomId != 'main'
+        && request.resource.data.members is list
+        && request.resource.data.members.size() == 2
+        && request.auth.uid in request.resource.data.members;
+      allow update: if signedIn() && roomId != 'main' && request.auth.uid in resource.data.members
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActivity', 'theme', 'members']);
+      allow delete: if false;
 
       // ---------- chat messages ----------
-      // (The old "messages" collection is intentionally no longer matched: that chat was retired.)
       match /chat/{messageId} {
-        allow read: if signedIn();
+        allow read: if isRoomMember(roomId);
 
-        allow create: if signedIn()
-          && roomId == 'main'
+        allow create: if isRoomMember(roomId)
           && request.resource.data.keys().hasOnly(['senderUid', 'senderName', 'senderPhoto', 'type', 'text',
                                                    'mediaUrl', 'mediaPath', 'refId', 'durationMs', 'timestamp',
                                                    'replyToId', 'replyToName', 'replyToText'])
@@ -48,22 +95,16 @@ service cloud.firestore {
           && str(request.resource.data.get('text', ''), 4000)
           && httpsOrEmpty(request.resource.data.get('mediaUrl', ''))
           && str(request.resource.data.get('mediaPath', ''), 300)
-          && (request.resource.data.get('mediaPath', '') == ''
-              || request.resource.data.mediaPath.matches('^media/' + request.auth.uid + '/.*'))
           && str(request.resource.data.get('refId', ''), 100)
           && request.resource.data.get('durationMs', 0) is int
           && str(request.resource.data.get('replyToId', ''), 100)
           && str(request.resource.data.get('replyToName', ''), 40)
           && str(request.resource.data.get('replyToText', ''), 200)
           && request.resource.data.timestamp == request.time
-          // a text message needs text, media messages need a file
           && (request.resource.data.type != 'text' || request.resource.data.get('text', '').size() > 0)
           && (request.resource.data.type == 'text' || request.resource.data.get('mediaUrl', '') != '');
 
-        // Content is immutable. The only change allowed is each user setting/removing
-        // their OWN reaction (reactions.<uid> = emoji). Only the author may delete a message.
-        allow update: if signedIn() && (
-          // (a) the author deletes the message for everyone: content wiped, placeholder kept
+        allow update: if isRoomMember(roomId) && (
           (resource.data.senderUid == request.auth.uid
             && resource.data.type != 'deleted'
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -74,7 +115,6 @@ service cloud.firestore {
             && request.resource.data.get('replyToText', '') == ''
             && request.resource.data.get('reactions', {}).size() == 0)
           ||
-          // (b) anyone sets/removes their OWN reaction on a normal message
           (resource.data.type != 'deleted'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
           && request.resource.data.reactions is map
@@ -85,11 +125,10 @@ service cloud.firestore {
         allow delete: if signedIn() && resource.data.senderUid == request.auth.uid;
       }
 
-      // ---------- uploaded songs ----------
+      // ---------- songs (anyone in the room can add or remove; default song has no doc) ----------
       match /music/{songId} {
-        allow read: if signedIn();
-        allow create: if signedIn()
-          && roomId == 'main'
+        allow read: if isRoomMember(roomId);
+        allow create: if isRoomMember(roomId)
           && request.resource.data.keys().hasOnly(['title', 'url', 'storagePath', 'uploaderUid', 'sizeBytes', 'createdAt'])
           && request.resource.data.uploaderUid == request.auth.uid
           && str(request.resource.data.title, 200) && request.resource.data.title.size() > 0
@@ -99,28 +138,23 @@ service cloud.firestore {
           && request.resource.data.sizeBytes <= 15 * 1024 * 1024
           && request.resource.data.createdAt == request.time;
         allow update: if false;
-        allow delete: if signedIn() && resource.data.uploaderUid == request.auth.uid;
+        allow delete: if isRoomMember(roomId); // any member can tidy the playlist
       }
 
-      // ---------- shared playback state (rooms/main/state/player) ----------
-      // Anyone in the room may play / pause / seek for everyone (that is the feature),
-      // but must stamp the write with their own uid and a valid structure.
-      // Mute is local-only and never written here.
+      // ---------- shared playback + clear-chat marker ----------
       match /state/{docId} {
-        allow read: if signedIn();
-        // "Clear chat for everyone": hides every message older than clearedAt.
-        // Needs the admin password: in the SAME batch the user must create clearAuth/{proof},
-        // which only succeeds with the right password (see /clearAuth below).
-        allow create, update: if signedIn()
-          && roomId == 'main' && docId == 'chat'
+        allow read: if isRoomMember(roomId);
+
+        // Clear chat for everyone: needs the admin password proof in the same batch.
+        allow create, update: if isRoomMember(roomId) && docId == 'chat'
           && request.resource.data.keys().hasOnly(['clearedAt', 'clearedBy', 'proof'])
           && request.resource.data.clearedAt == request.time
           && request.resource.data.clearedBy == request.auth.uid
           && str(request.resource.data.proof, 64)
-          && getAfter(/databases/$(database)/documents/clearAuth/$(request.resource.data.proof)).data.by == request.auth.uid
-          && getAfter(/databases/$(database)/documents/clearAuth/$(request.resource.data.proof)).data.at == request.time;
-        allow create, update: if signedIn()
-          && roomId == 'main' && docId == 'player'
+          && proofOk(request.resource.data.proof);
+
+        // Shared music state: any member may play/pause/seek for the room.
+        allow create, update: if isRoomMember(roomId) && docId == 'player'
           && request.resource.data.keys().hasOnly(['songId', 'songTitle', 'songUrl', 'playing', 'positionMs', 'updatedAt', 'updatedBy'])
           && str(request.resource.data.songId, 100)
           && str(request.resource.data.songTitle, 200)
@@ -139,9 +173,7 @@ service cloud.firestore {
         return request.auth.uid == resource.data.callerUid
             || (resource.data.calleeUid != '' && request.auth.uid == resource.data.calleeUid);
       }
-
       allow read: if signedIn();
-
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['callerUid', 'callerName', 'callerPhoto', 'video', 'state',
                                                  'offer', 'answer', 'calleeUid', 'calleeName', 'createdAt'])
@@ -156,9 +188,7 @@ service cloud.firestore {
         && request.resource.data.answer == null
         && request.resource.data.calleeUid == ''
         && request.resource.data.createdAt == request.time;
-
       allow update: if signedIn() && (
-        // 1) Accept: a different user answers a ringing call and becomes the callee.
         (resource.data.state == 'ringing'
           && request.auth.uid != resource.data.callerUid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answer', 'state', 'calleeUid', 'calleeName'])
@@ -169,12 +199,10 @@ service cloud.firestore {
           && request.resource.data.answer.type == 'answer'
           && str(request.resource.data.answer.sdp, 100000))
         ||
-        // 2) State-only changes: participants may end the call; anyone may decline a ringing call.
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state'])
           && request.resource.data.state in ['rejected', 'ended']
           && (participant() || (resource.data.state == 'ringing' && request.resource.data.state == 'rejected')))
       );
-
       allow delete: if signedIn() && request.auth.uid == resource.data.callerUid;
 
       match /candidates/{candidateId} {
@@ -191,11 +219,9 @@ service cloud.firestore {
       }
     }
 
-    // ---------- media files (images, stickers, voice, music, profile photos) ----------
-    // Stored in Firestore so no paid Storage bucket is needed. Split in <= 900 KB chunks.
+    // ---------- media blobs (images, stickers, voice, music, profile photos) ----------
     match /blobs/{blobId} {
       function blobMeta() { return get(/databases/$(database)/documents/blobs/$(blobId)).data; }
-
       allow read: if signedIn();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['ownerUid', 'kind', 'mime', 'size', 'chunks', 'createdAt'])
@@ -226,9 +252,9 @@ service cloud.firestore {
       }
     }
 
-    // ---------- password check for "clear chat for everyone" ----------
-    // Only the SHA-256 of the password is here; the password itself is not in the app.
-    // Nobody can read these documents from the app.
+    // ---------- admin / clear-chat password proof ----------
+    // Only the SHA-256 of the password lives here (in this rules file). The password itself
+    // is never in the app. These docs are write-only; nobody can read them back.
     match /clearAuth/{proofId} {
       allow read: if false;
       allow create: if signedIn()
@@ -240,7 +266,6 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Everything else is closed.
     match /{document=**} {
       allow read, write: if false;
     }

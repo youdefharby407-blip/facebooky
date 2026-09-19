@@ -76,6 +76,7 @@ fun MessageItem(
     onQuoteClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     replyTargetDeleted: Boolean = false,
+    senderIsAdmin: Boolean = false,
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val longPress = { onLongPress(message) }
@@ -95,12 +96,17 @@ fun MessageItem(
             modifier = Modifier.widthIn(max = 290.dp),
         ) {
             if (showSender && !isMine) {
-                Text(
-                    senderName,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 2.dp)) {
+                    Text(
+                        senderName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                    if (senderIsAdmin) AdminTag()
+                }
+            } else if (isMine && senderIsAdmin && showSender) {
+                Row(Modifier.padding(bottom = 2.dp)) { AdminTag() }
             }
             val bubbleColor = if (isMine) MaterialTheme.colorScheme.primary else TheirBubble
             val contentColor = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface

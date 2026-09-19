@@ -1,11 +1,13 @@
 package com.yousef.facebooky.data
 
+import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import com.yousef.facebooky.data.model.ChatMessage
 import com.yousef.facebooky.data.model.MessageType
 import com.yousef.facebooky.data.model.ReplyTarget
@@ -17,44 +19,15 @@ import kotlinx.coroutines.tasks.await
 
 data class MessagesSnapshot(val messages: List<ChatMessage>, val fromCache: Boolean)
 
-class ChatRepository(private val db: FirebaseFirestore) {
+/**
+ * Reads and writes the messages of ONE room. A new instance is created whenever the
+ * user switches room, so all paths below are scoped to [roomId].
+ */
+class ChatRepository(private val db: FirebaseFirestore, val roomId: String) {
 
-    /** rooms/main/state/chat -> clearedAt: messages older than this are hidden for everyone. */
-    private val chatState = db.collection(FirebasePaths.ROOMS)
-        .document(FirebasePaths.MAIN_ROOM)
-        .collection(FirebasePaths.STATE)
-        .document("chat")
-
-    fun observeClearedAt(): Flow<Long> = callbackFlow {
-        val reg = chatState.addSnapshotListener { snap, e ->
-            if (e != null) {
-                close(e)
-                return@addSnapshotListener
-            }
-            trySend(
-                snap?.getTimestamp("clearedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                    ?.toDate()?.time ?: 0L
-            )
-        }
-        awaitClose { reg.remove() }
-    }
-
-    /**
-     * Clears the chat for everyone. The server only accepts it with the right password:
-     * the password goes into a write-only clearAuth document in the same batch, checked by the rules.
-     */
-    suspend fun clearForEveryone(uid: String, password: String) {
-        val proof = db.collection("clearAuth").document()
-        db.batch()
-            .set(proof, mapOf("key" to password, "by" to uid, "at" to FieldValue.serverTimestamp()))
-            .set(chatState, mapOf("clearedAt" to FieldValue.serverTimestamp(), "clearedBy" to uid, "proof" to proof.id))
-            .commit()
-            .await()
-    }
-
-    private val messages = db.collection(FirebasePaths.ROOMS)
-        .document(FirebasePaths.MAIN_ROOM)
-        .collection(FirebasePaths.MESSAGES)
+    private val room = db.collection(FirebasePaths.ROOMS).document(roomId)
+    private val messages: CollectionReference = room.collection(FirebasePaths.MESSAGES)
+    private val chatState = room.collection(FirebasePaths.STATE).document(FirebasePaths.CHAT_STATE_DOC)
 
     fun newId(): String = messages.document().id
 
@@ -75,10 +48,33 @@ class ChatRepository(private val db: FirebaseFirestore) {
         awaitClose { registration.remove() }
     }
 
+    fun observeClearedAt(): Flow<Long> = callbackFlow {
+        val reg = chatState.addSnapshotListener { snap, e ->
+            if (e != null) {
+                close(e)
+                return@addSnapshotListener
+            }
+            trySend(
+                snap?.getTimestamp("clearedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?.toDate()?.time ?: 0L
+            )
+        }
+        awaitClose { reg.remove() }
+    }
+
     /**
-     * Writes are not awaited: Firestore queues them offline and the message shows
-     * immediately with a "sending" marker until the server confirms.
+     * Clears the chat for everyone. Accepted by the server only with the right password:
+     * the password goes into a write-only clearAuth doc in the same batch, checked by the rules.
      */
+    suspend fun clearForEveryone(uid: String, password: String) {
+        val proof = db.collection(FirebasePaths.CLEAR_AUTH).document()
+        db.batch()
+            .set(proof, mapOf("key" to password, "by" to uid, "at" to FieldValue.serverTimestamp()))
+            .set(chatState, mapOf("clearedAt" to FieldValue.serverTimestamp(), "clearedBy" to uid, "proof" to proof.id))
+            .commit()
+            .await()
+    }
+
     fun send(
         id: String,
         sender: UserProfile,
@@ -108,6 +104,8 @@ class ChatRepository(private val db: FirebaseFirestore) {
                 "timestamp" to FieldValue.serverTimestamp(),
             )
         ).addOnFailureListener(onError)
+        // Bump room activity so it sorts to the top of the room list (best-effort).
+        room.set(mapOf("lastActivity" to FieldValue.serverTimestamp()), SetOptions.merge())
     }
 
     private fun DocumentSnapshot.toMessage() = ChatMessage(

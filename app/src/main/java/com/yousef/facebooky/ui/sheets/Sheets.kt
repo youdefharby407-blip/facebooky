@@ -41,6 +41,9 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -279,7 +282,9 @@ fun MusicSheet(vm: ChatViewModel, onAddMusic: () -> Unit, onDismiss: () -> Unit)
                         },
                         isCurrent = current?.songId == song.id,
                         isPlaying = current?.songId == song.id && playing,
+                        canDelete = !song.isBundled,
                         onClick = { if (current?.songId == song.id) vm.toggleMusic() else vm.playSong(song) },
+                        onDelete = { vm.deleteSong(song) },
                     )
                 }
             }
@@ -349,7 +354,16 @@ fun MusicSeekBar(positionMs: Long, durationMs: Long, enabled: Boolean, onSeek: (
 }
 
 @Composable
-private fun SongRow(song: Song, addedBy: String?, isCurrent: Boolean, isPlaying: Boolean, onClick: () -> Unit) {
+private fun SongRow(
+    song: Song,
+    addedBy: String?,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
+    canDelete: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var confirm by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -374,5 +388,21 @@ private fun SongRow(song: Song, addedBy: String?, isCurrent: Boolean, isPlaying:
             }
         }
         Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (canDelete) {
+            IconButton(onClick = { confirm = true }) {
+                Icon(Icons.Rounded.Delete, "Delete song", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text("Delete song?") },
+            text = { Text("\"${song.title}\" will be removed for everyone.") },
+            confirmButton = { TextButton(onClick = { onDelete(); confirm = false }) {
+                Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+        )
     }
 }

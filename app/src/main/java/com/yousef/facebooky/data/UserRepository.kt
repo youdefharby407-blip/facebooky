@@ -66,7 +66,11 @@ class UserRepository(private val db: FirebaseFirestore, private val context: Con
             }
             trySend(
                 snap?.documents.orEmpty().associate { d ->
-                    d.id to UserProfile(d.id, d.getString("name").orEmpty(), d.getString("photoUrl").orEmpty())
+                    d.id to UserProfile(
+                        d.id, d.getString("name").orEmpty(), d.getString("photoUrl").orEmpty(),
+                        shortId = d.getString("shortId").orEmpty(),
+                        isAdmin = d.getBoolean("admin") ?: false,
+                    )
                 }
             )
         }
@@ -77,7 +81,8 @@ class UserRepository(private val db: FirebaseFirestore, private val context: Con
     suspend fun fetch(uid: String): UserProfile? {
         val doc = db.collection(FirebasePaths.USERS).document(uid).get().await()
         if (!doc.exists()) return null
-        val profile = UserProfile(uid, doc.getString("name").orEmpty(), doc.getString("photoUrl").orEmpty())
+        val profile = UserProfile(uid, doc.getString("name").orEmpty(), doc.getString("photoUrl").orEmpty(),
+            shortId = doc.getString("shortId").orEmpty(), isAdmin = doc.getBoolean("admin") ?: false)
         if (!profile.isComplete) return null
         prefs.edit().putString("uid", uid).putString("name", profile.name)
             .putString("photo", profile.photoUrl).putBoolean("dirty", false).apply()

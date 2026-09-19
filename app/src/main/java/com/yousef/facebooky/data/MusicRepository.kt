@@ -11,9 +11,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
-class MusicRepository(db: FirebaseFirestore) {
+class MusicRepository(db: FirebaseFirestore, roomId: String) {
 
-    private val room = db.collection(FirebasePaths.ROOMS).document(FirebasePaths.MAIN_ROOM)
+    private val room = db.collection(FirebasePaths.ROOMS).document(roomId)
     private val songs = room.collection(FirebasePaths.MUSIC)
     private val playerDoc = room.collection(FirebasePaths.STATE).document(FirebasePaths.PLAYER_DOC)
 
@@ -76,6 +76,11 @@ class MusicRepository(db: FirebaseFirestore) {
                 "createdAt" to FieldValue.serverTimestamp(),
             )
         ).await()
+    }
+
+    /** Deletes a song. The bundled default song ("معاك قلبي") can never be deleted (guarded in the UI + rules). */
+    fun deleteSong(id: String, onError: (Exception) -> Unit) {
+        songs.document(id).delete().addOnFailureListener(onError)
     }
 
     fun publish(state: SharedPlayback) {

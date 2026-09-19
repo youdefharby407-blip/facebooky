@@ -38,3 +38,18 @@ private val Colors = darkColorScheme(
 fun FaceBookyTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = Colors, content = content)
 }
+
+/** Per-room chat backgrounds. "wallpaper" = the bundled image; the rest are solid/gradient. */
+data class ChatTheme(val id: String, val label: String, val colors: List<Color>)
+
+val ChatThemes = listOf(
+    ChatTheme("wallpaper", "Default", listOf(Color(0xFF0A0A0A), Color(0xFF141414))),
+    ChatTheme("midnight", "Midnight", listOf(Color(0xFF0B1026), Color(0xFF1B2452))),
+    ChatTheme("rose", "Rose", listOf(Color(0xFF2A0A16), Color(0xFF4A1022))),
+    ChatTheme("forest", "Forest", listOf(Color(0xFF06160F), Color(0xFF0F2A1E))),
+    ChatTheme("plum", "Plum", listOf(Color(0xFF160A26), Color(0xFF2A1452))),
+    ChatTheme("charcoal", "Charcoal", listOf(Color(0xFF121212), Color(0xFF1E1E1E))),
+    ChatTheme("ocean", "Ocean", listOf(Color(0xFF04141A), Color(0xFF0A2A38))),
+)
+
+fun chatThemeById(id: String): ChatTheme = ChatThemes.firstOrNull { it.id == id } ?: ChatThemes.first()

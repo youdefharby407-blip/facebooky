@@ -1,6 +1,9 @@
 package com.yousef.facebooky.ui.chat
 
 import android.Manifest
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -15,6 +18,7 @@ import androidx.compose.ui.res.painterResource
 import com.yousef.facebooky.R
 import com.yousef.facebooky.ui.icons.AppIcons
 import com.yousef.facebooky.ui.theme.BarColor
+import com.yousef.facebooky.ui.theme.chatThemeById
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -116,6 +120,9 @@ fun ChatScreen(vm: ChatViewModel) {
     var viewingImage by remember { mutableStateOf<String?>(null) }
     var actionsFor by remember { mutableStateOf<ChatMessage?>(null) }
     var confirmClear by remember { mutableStateOf<ClearMode?>(null) }
+    var showRooms by remember { mutableStateOf(false) }
+    var showTheme by remember { mutableStateOf(false) }
+    var showAdminLogin by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
     val voice by vm.voicePlayer.state.collectAsStateWithLifecycle()
@@ -174,28 +181,37 @@ fun ChatScreen(vm: ChatViewModel) {
         )
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-    Image(
-        painterResource(R.drawable.chat_bg), null,
-        contentScale = ContentScale.Crop,
-        modifier = Modifier.fillMaxSize(),
-    )
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0x66000000), Color(0x22000000), Color(0x88000000))))
-    )
+    val theme = chatThemeById(vm.roomTheme)
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(theme.colors))) {
+    if (vm.roomTheme == "wallpaper") {
+        Image(
+            painterResource(R.drawable.chat_bg), null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Brush.verticalGradient(listOf(Color(0x66000000), Color(0x22000000), Color(0x88000000))))
+        )
+    }
     Scaffold(
         topBar = {
             ChatHeader(
                 profile = vm.profile,
+                peer = vm.peer,
+                inPrivateRoom = vm.roomId != "main",
                 locked = vm.chatLocked,
                 onProfile = { vm.openProfileEditor() },
+                onBackToLobby = { vm.openLobby() },
+                onSecretAdmin = { showAdminLogin = true },
                 connection = vm.connection,
                 musicActive = shared?.playing == true,
                 onMusic = { showMusic = true },
                 onVoiceCall = { startCall(false) },
                 onVideoCall = { startCall(true) },
+                onRooms = { showRooms = true },
+                onTheme = { showTheme = true },
                 onClearForMe = { confirmClear = ClearMode.ME },
                 onClearForEveryone = { confirmClear = ClearMode.EVERYONE },
             )
@@ -268,6 +284,22 @@ fun ChatScreen(vm: ChatViewModel) {
         }
     }
 
+    }
+
+    if (showRooms) {
+        RoomsSheet(vm = vm, onDismiss = { showRooms = false })
+    }
+    if (showTheme) {
+        ThemeSheet(current = vm.roomTheme, onPick = { vm.setRoomTheme(it) }, onDismiss = { showTheme = false })
+    }
+    if (showAdminLogin) {
+        AdminLoginDialog(
+            onLogin = vm::loginAdmin,
+            onClose = { showAdminLogin = false },
+        )
+    }
+    if (vm.showAdmin) {
+        AdminScreen(vm = vm, onClose = { vm.closeAdmin() })
     }
 
     if (showAttach) {
@@ -360,6 +392,7 @@ private fun MessageList(
                 onLongPress = onLongPress,
                 replyTargetDeleted = m.replyToId.isNotBlank() &&
                     byId[m.replyToId]?.type == MessageType.DELETED,
+                senderIsAdmin = vm.isAdminSender(m.senderUid),
                 onQuoteClick = { id ->
                     val target = newestFirst.indexOfFirst { it.id == id }
                     if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
@@ -373,29 +406,45 @@ private fun MessageList(
 @Composable
 private fun ChatHeader(
     profile: UserProfile?,
+    peer: UserProfile?,
+    inPrivateRoom: Boolean,
     locked: Boolean,
     onProfile: () -> Unit,
+    onBackToLobby: () -> Unit,
+    onSecretAdmin: () -> Unit,
     connection: ConnectionStatus,
     musicActive: Boolean,
     onMusic: () -> Unit,
     onVoiceCall: () -> Unit,
     onVideoCall: () -> Unit,
+    onRooms: () -> Unit,
+    onTheme: () -> Unit,
     onClearForMe: () -> Unit,
     onClearForEveryone: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
+    // Secret admin door: tap the "Welcome"/title area 10 times quickly.
+    var taps by remember { mutableIntStateOf(0) }
+    var lastTap by remember { mutableLongStateOf(0L) }
     Surface(color = BarColor, contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .height(62.dp)
-                .padding(start = 14.dp, end = 2.dp),
+                .padding(start = 6.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val hasProfile = profile?.isComplete == true
-            if (hasProfile) {
-                Avatar(profile!!.displayPhoto, 40.dp, Modifier.clickable(onClick = onProfile))
+            if (inPrivateRoom) {
+                IconButton(onClick = onBackToLobby) { Icon(AppIcons.Reply, "Back", Modifier.size(22.dp)) }
+            } else {
+                Spacer(Modifier.width(8.dp))
+            }
+            // Avatar shown: in a private room, the peer; otherwise me.
+            val shownPhoto = if (inPrivateRoom) peer?.photoUrl.orEmpty() else profile?.displayPhoto.orEmpty()
+            if (shownPhoto.isNotBlank()) {
+                Avatar(shownPhoto, 40.dp, Modifier.clickable(onClick = onProfile))
             } else {
                 Image(
                     painterResource(R.mipmap.ic_launcher_foreground), "My Space",
@@ -404,16 +453,37 @@ private fun ChatHeader(
                 )
             }
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) {
+                        val now = System.currentTimeMillis()
+                        taps = if (now - lastTap < 700) taps + 1 else 1
+                        lastTap = now
+                        if (taps >= 10) {
+                            taps = 0
+                            onSecretAdmin()
+                        }
+                    },
+            ) {
+                val title = when {
+                    inPrivateRoom -> peer?.name?.takeIf { it.isNotBlank() } ?: "Chat"
+                    hasProfile -> "Welcome, ${profile!!.name}"
+                    else -> "My Space"
+                }
                 Text(
-                    if (hasProfile) "Welcome, ${profile!!.name}" else "My Space",
+                    title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                ConnectionLine(connection, locked, prefix = if (hasProfile) "My Space" else null)
+                ConnectionLine(connection, locked, prefix = if (inPrivateRoom) "My Space" else if (hasProfile) "My Space" else null)
             }
+            HeaderButton(AppIcons.User, "Chats", onRooms)
             HeaderButton(AppIcons.Music, "Music", onMusic, tint = if (musicActive) MaterialTheme.colorScheme.primary else null)
             HeaderButton(AppIcons.Video, "Video call", onVideoCall)
             HeaderButton(AppIcons.Phone, "Voice call", onVoiceCall)
@@ -428,6 +498,11 @@ private fun ChatHeader(
                         text = { Text(if (hasProfile) "Edit profile" else "Set up profile") },
                         leadingIcon = { Icon(AppIcons.User, null, Modifier.size(20.dp)) },
                         onClick = { menu = false; onProfile() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Chat theme") },
+                        leadingIcon = { Icon(AppIcons.Smile, null, Modifier.size(20.dp)) },
+                        onClick = { menu = false; onTheme() },
                     )
                     DropdownMenuItem(
                         text = { Text("Clear chat for me") },

@@ -19,6 +19,9 @@ data class UserProfile(
     val photoUrl: String,
     /** Path of the photo saved on this phone, so the profile works instantly and offline. */
     val localPhoto: String = "",
+    /** Friendly public ID others use to start a chat, e.g. "K7Q-4M2". */
+    val shortId: String = "",
+    val isAdmin: Boolean = false,
 ) {
     val isComplete: Boolean get() = name.isNotBlank() && (photoUrl.isNotBlank() || localPhoto.isNotBlank())
 
@@ -56,6 +59,36 @@ data class ChatMessage(
             else -> text
         }
 }
+
+/** A chat room (1:1 private room, or the shared lobby "main"). */
+data class RoomInfo(
+    val id: String,
+    val members: List<String>,
+    val theme: String = "wallpaper",
+    val lastActivityMs: Long = 0L,
+) {
+    val isMain: Boolean get() = id == "main"
+    fun otherUid(myUid: String): String? = members.firstOrNull { it != myUid }
+
+    companion object {
+        fun from(id: String, data: Map<String, Any?>): RoomInfo = RoomInfo(
+            id = id,
+            members = (data["members"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+            theme = (data["theme"] as? String) ?: "wallpaper",
+            lastActivityMs = (data["lastActivity"] as? com.google.firebase.Timestamp)?.toDate()?.time ?: 0L,
+        )
+    }
+}
+
+/** A device/user seen in a room, for the admin console. */
+data class Presence(
+    val uid: String,
+    val name: String,
+    val photoUrl: String,
+    val shortId: String,
+    val lastSeenMs: Long,
+    val device: String,
+)
 
 /** Who a new message replies to. */
 data class ReplyTarget(val id: String, val name: String, val text: String)

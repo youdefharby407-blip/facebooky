@@ -112,6 +112,18 @@ class MusicController(
         applyVolume()
     }
 
+    /** Deletes a song for everyone. The bundled default ("معاك قلبي") can never be deleted. */
+    fun deleteSong(song: Song, onError: (Exception) -> Unit) {
+        if (song.isBundled || song.id == DEFAULT_SONG_ID) {
+            onError(IllegalStateException("protected"))
+            return
+        }
+        if (_shared.value?.songId == song.id) publish(defaultSong, playing = false, positionMs = 0L)
+        repo.deleteSong(song.id, onError)
+    }
+
+    fun stop() = release()
+
     fun release() {
         jobs.forEach { it.cancel() }
         jobs.clear()
@@ -276,6 +288,7 @@ class MusicController(
     companion object {
         const val DEFAULT_SONG_ID = "default"
         private const val TAG = "MusicController"
+
         private const val SYNC_TOLERANCE_MS = 1500L
         private const val RETRY_MS = 3000L
     }
