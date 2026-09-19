@@ -1,6 +1,21 @@
 package com.yousef.facebooky.ui.chat
 
 import android.Manifest
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.rounded.Reply
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import com.yousef.facebooky.data.model.ChatMessage
+import kotlinx.coroutines.launch
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -85,6 +100,8 @@ fun ChatScreen(vm: ChatViewModel) {
     var showMusic by rememberSaveable { mutableStateOf(false) }
     var showEmoji by remember { mutableStateOf(false) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
+    var actionsFor by remember { mutableStateOf<ChatMessage?>(null) }
+    val clipboard = LocalClipboardManager.current
 
     val voice by vm.voicePlayer.state.collectAsStateWithLifecycle()
     val shared by vm.music.shared.collectAsStateWithLifecycle()
@@ -108,10 +125,24 @@ fun ChatScreen(vm: ChatViewModel) {
         permissions.request(perms) { vm.startCall(video) }
     }
 
+    actionsFor?.let { m ->
+        MessageActionsSheet(
+            message = m,
+            myReaction = vm.myUid?.let { m.reactions[it] },
+            isMine = m.senderUid == vm.myUid,
+            onReact = { vm.react(m, it); actionsFor = null },
+            onReply = { vm.startReply(m); actionsFor = null },
+            onCopy = { clipboard.setText(AnnotatedString(m.text)); actionsFor = null },
+            onDelete = { vm.deleteMessage(m); actionsFor = null },
+            onDismiss = { actionsFor = null },
+        )
+    }
+
     Scaffold(
         topBar = {
             ChatHeader(
                 profile = vm.profile,
+                other = otherPerson(vm),
                 locked = vm.chatLocked,
                 onProfile = { vm.openProfileEditor() },
                 connection = vm.connection,
@@ -151,8 +182,19 @@ fun ChatScreen(vm: ChatViewModel) {
                 vm = vm,
                 voice = voice,
                 onOpenImage = { viewingImage = it },
+                onLongPress = { actionsFor = it },
                 modifier = Modifier.weight(1f),
             )
+
+            val replying = vm.replyingTo
+            AnimatedVisibility(replying != null, enter = expandVertically(), exit = shrinkVertically()) {
+                val m = replying ?: return@AnimatedVisibility
+                ReplyStrip(
+                    name = if (m.senderUid == vm.myUid) "You" else vm.nameOf(m),
+                    text = m.preview,
+                    onCancel = vm::cancelReply,
+                )
+            }
 
             InputBar(
                 text = vm.draft,
@@ -213,9 +255,11 @@ private fun MessageList(
     vm: ChatViewModel,
     voice: com.yousef.facebooky.audio.VoicePlaybackState,
     onOpenImage: (String) -> Unit,
+    onLongPress: (ChatMessage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val messages = vm.messages
+    val scope = rememberCoroutineScope()
     val myUid = vm.myUid
     val listState = rememberLazyListState()
     val newest = messages.lastOrNull()
@@ -258,10 +302,18 @@ private fun MessageList(
                 message = m,
                 isMine = isMine,
                 showSender = older == null || older.senderUid != m.senderUid,
+                senderName = vm.nameOf(m),
+                senderPhoto = vm.photoOf(m),
+                myUid = myUid,
                 voice = voice,
                 onToggleVoice = { if (it.type == MessageType.VOICE) vm.voicePlayer.toggle(it.id, it.mediaUrl) },
                 onOpenImage = onOpenImage,
                 onPlaySong = vm::playSongFromMessage,
+                onLongPress = onLongPress,
+                onQuoteClick = { id ->
+                    val target = newestFirst.indexOfFirst { it.id == id }
+                    if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
+                },
                 modifier = Modifier.animateItem(),
             )
         }
@@ -271,6 +323,7 @@ private fun MessageList(
 @Composable
 private fun ChatHeader(
     profile: UserProfile?,
+    other: UserProfile?,
     locked: Boolean,
     onProfile: () -> Unit,
     connection: ConnectionStatus,
@@ -291,7 +344,20 @@ private fun ChatHeader(
         ) {
             val hasProfile = profile?.isComplete == true
             if (hasProfile) {
-                Avatar(profile!!.displayPhoto, 38.dp, Modifier.clickable(onClick = onProfile))
+                // The person I'm talking to (big) with my own photo in the corner. Tap = edit my profile.
+                Box(Modifier.size(44.dp).clickable(onClick = onProfile)) {
+                    if (other != null) {
+                        Avatar(other.photoUrl, 40.dp)
+                        Avatar(
+                            profile!!.displayPhoto, 20.dp,
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape),
+                        )
+                    } else {
+                        Avatar(profile!!.displayPhoto, 40.dp, Modifier.align(Alignment.Center))
+                    }
+                }
             } else {
                 Box(
                     Modifier
@@ -312,7 +378,7 @@ private fun ChatHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                ConnectionLine(connection, locked, showAppName = hasProfile)
+                ConnectionLine(connection, locked, prefix = other?.name?.let { "with $it" } ?: if (hasProfile) "FaceBooky" else null)
             }
             IconButton(onClick = onMusic) {
                 Icon(
@@ -342,7 +408,7 @@ private fun ChatHeader(
 }
 
 @Composable
-private fun ConnectionLine(connection: ConnectionStatus, locked: Boolean, showAppName: Boolean) {
+private fun ConnectionLine(connection: ConnectionStatus, locked: Boolean, prefix: String?) {
     Crossfade(targetState = connection to locked, label = "connection") { (c, isLocked) ->
         val (status, color) = when {
             c == ConnectionStatus.OFFLINE -> "Offline" to MaterialTheme.colorScheme.error
@@ -350,7 +416,7 @@ private fun ConnectionLine(connection: ConnectionStatus, locked: Boolean, showAp
             c == ConnectionStatus.CONNECTED -> "Connected" to Color(0xFF22C55E)
             else -> "Connecting…" to Color(0xFFF59E0B)
         }
-        val label = if (showAppName) "FaceBooky · $status" else status
+        val label = if (prefix != null) "$prefix · $status" else status
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -388,5 +454,94 @@ private fun NowPlayingStrip(title: String, muted: Boolean, onToggleMute: () -> U
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
+    }
+}
+
+
+/** The other person in the chat: whoever (not me) wrote most recently. */
+private fun otherPerson(vm: ChatViewModel): UserProfile? {
+    val me = vm.myUid ?: return null
+    val m = vm.messages.lastOrNull { it.senderUid != me && it.senderUid.isNotBlank() } ?: return null
+    return vm.people[m.senderUid]?.takeIf { it.name.isNotBlank() }
+        ?: UserProfile(m.senderUid, m.senderName, m.senderPhoto)
+}
+
+@Composable
+private fun ReplyStrip(name: String, text: String, onCancel: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 4.dp, top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(34.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Replying to $name", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(text, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "Cancel reply") }
+        }
+    }
+}
+
+private val QuickReactions = listOf("❤️", "😂", "😮", "😢", "👍", "🙏")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MessageActionsSheet(
+    message: ChatMessage,
+    myReaction: String?,
+    isMine: Boolean,
+    onReact: (String) -> Unit,
+    onReply: () -> Unit,
+    onCopy: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                QuickReactions.forEach { emoji ->
+                    val selected = emoji == myReaction
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent)
+                            .clickable { onReact(emoji) },
+                        contentAlignment = Alignment.Center,
+                    ) { Text(emoji, style = MaterialTheme.typography.headlineSmall) }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            ActionRow(Icons.AutoMirrored.Rounded.Reply, "Reply", onReply)
+            if (message.type == MessageType.TEXT) ActionRow(Icons.Rounded.ContentCopy, "Copy", onCopy)
+            if (isMine) ActionRow(Icons.Rounded.Delete, "Delete", onDelete, danger = true)
+        }
+    }
+}
+
+@Composable
+private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit, danger: Boolean = false) {
+    val color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = color)
+        Spacer(Modifier.width(16.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = color)
     }
 }

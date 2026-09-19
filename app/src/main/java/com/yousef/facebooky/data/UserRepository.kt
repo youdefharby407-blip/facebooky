@@ -4,6 +4,9 @@ import android.content.Context
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.yousef.facebooky.data.model.UserProfile
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 import java.io.File
 
@@ -52,6 +55,22 @@ class UserRepository(private val db: FirebaseFirestore, private val context: Con
 
     fun setRemotePhoto(uid: String, url: String) {
         if (prefs.getString("uid", null) == uid) prefs.edit().putString("photo", url).apply()
+    }
+
+    /** Everyone's current name + photo (uid -> profile), live. Used for avatars and names in the chat. */
+    fun observeAll(): Flow<Map<String, UserProfile>> = callbackFlow {
+        val reg = db.collection(FirebasePaths.USERS).addSnapshotListener { snap, e ->
+            if (e != null) {
+                close(e)
+                return@addSnapshotListener
+            }
+            trySend(
+                snap?.documents.orEmpty().associate { d ->
+                    d.id to UserProfile(d.id, d.getString("name").orEmpty(), d.getString("photoUrl").orEmpty())
+                }
+            )
+        }
+        awaitClose { reg.remove() }
     }
 
     /** Profile stored in Firestore (used when this phone has no local profile yet). */

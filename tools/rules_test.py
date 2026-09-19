@@ -69,5 +69,18 @@ def anon_read():
     except urllib.error.HTTPError as e: return e.code, e.read().decode()
 expect("unauthenticated read", anon_read(), False)
 
+def patch(uid, path, fields, mask):
+    q = "&".join(f"updateMask.fieldPaths={m}" for m in mask)
+    return req("PATCH", f"{BASE}/{path}?{q}&currentDocument.exists=true", uid, {"fields": fields})
+expect("reply message", write("alice", "rooms/main/messages/m4", dict(msg("alice", "text", "re"),
+        replyToId=S("m1"), replyToName=S("Alice"), replyToText=S("hi")), "timestamp"), True)
+expect("bob reacts", patch("bob", "rooms/main/messages/m1", {"reactions": {"mapValue": {"fields": {"bob": S("❤️")}}}}, ["reactions.bob"]), True)
+expect("carol reacts", patch("carol", "rooms/main/messages/m1", {"reactions": {"mapValue": {"fields": {"carol": S("😂")}}}}, ["reactions.carol"]), True)
+expect("bob removes reaction", patch("bob", "rooms/main/messages/m1", {}, ["reactions.bob"]), True)
+expect("react as someone else", patch("bob", "rooms/main/messages/m1", {"reactions": {"mapValue": {"fields": {"carol": S("👍")}}}}, ["reactions.carol"]), False)
+expect("edit text via react", patch("bob", "rooms/main/messages/m1", {"text": S("hacked")}, ["text"]), False)
+expect("author deletes own", req("DELETE", f"{BASE}/rooms/main/messages/m2", "alice"), True)
+expect("delete others'", req("DELETE", f"{BASE}/rooms/main/messages/m1", "bob"), False)
+
 print("\nRESULT:", "ALL PASSED" if not failures else f"FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

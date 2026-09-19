@@ -1,6 +1,11 @@
 package com.yousef.facebooky.ui.chat
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,18 +54,25 @@ import java.util.Locale
 private val MineShape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)
 private val TheirsShape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageItem(
     message: ChatMessage,
     isMine: Boolean,
     showSender: Boolean,
+    senderName: String,
+    senderPhoto: String,
+    myUid: String?,
     voice: VoicePlaybackState,
     onToggleVoice: (ChatMessage) -> Unit,
     onOpenImage: (String) -> Unit,
     onPlaySong: (ChatMessage) -> Unit,
+    onLongPress: (ChatMessage) -> Unit,
+    onQuoteClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val longPress = { onLongPress(message) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -69,7 +81,7 @@ fun MessageItem(
         verticalAlignment = Alignment.Top,
     ) {
         if (!isMine) {
-            if (showSender) Avatar(message.senderPhoto, 30.dp) else Spacer(Modifier.width(30.dp))
+            if (showSender) Avatar(senderPhoto, 30.dp) else Spacer(Modifier.width(30.dp))
             Spacer(Modifier.width(8.dp))
         }
         Column(
@@ -78,7 +90,7 @@ fun MessageItem(
         ) {
             if (showSender && !isMine) {
                 Text(
-                    message.senderName,
+                    senderName,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
@@ -87,32 +99,56 @@ fun MessageItem(
             val bubbleColor = if (isMine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
             val contentColor = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
             val shape = if (isMine) MineShape else TheirsShape
+            val hasQuote = message.replyToId.isNotBlank()
+            if (hasQuote && message.type != MessageType.TEXT) {
+                ReplyQuote(
+                    name = message.replyToName, text = message.replyToText,
+                    color = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface,
+                    onClick = { onQuoteClick(message.replyToId) },
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
             when (message.type) {
                 MessageType.IMAGE -> AsyncImage(
                     model = message.mediaUrl,
                     contentDescription = "Photo",
                     contentScale = ContentScale.Crop,
                     placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
+                    error = ColorPainter(MaterialTheme.colorScheme.surfaceVariant),
                     modifier = Modifier
                         .size(220.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .clickable { onOpenImage(message.mediaUrl) },
+                        .combinedClickable(onClick = { onOpenImage(message.mediaUrl) }, onLongClick = longPress),
                 )
                 MessageType.STICKER -> AsyncImage(
                     model = message.mediaUrl,
                     contentDescription = "Sticker",
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier.size(120.dp),
+                    modifier = Modifier
+                        .size(120.dp)
+                        .combinedClickable(onClick = {}, onLongClick = longPress),
                 )
-                MessageType.VOICE -> VoiceBubble(message, voice, bubbleColor, contentColor, shape, onToggleVoice)
-                MessageType.MUSIC -> MusicBubble(message, bubbleColor, contentColor, shape, onPlaySong)
-                else -> Surface(shape = shape, color = bubbleColor, contentColor = contentColor) {
-                    Text(
-                        message.text.ifBlank { "Unsupported message" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    )
+                MessageType.VOICE -> VoiceBubble(message, voice, bubbleColor, contentColor, shape, onToggleVoice, longPress)
+                MessageType.MUSIC -> MusicBubble(message, bubbleColor, contentColor, shape, onPlaySong, longPress)
+                else -> Surface(
+                    shape = shape, color = bubbleColor, contentColor = contentColor,
+                    modifier = Modifier.combinedClickable(onClick = {}, onLongClick = longPress),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).width(IntrinsicSize.Max)) {
+                        if (hasQuote) {
+                            ReplyQuote(
+                                name = message.replyToName, text = message.replyToText,
+                                color = contentColor.copy(alpha = 0.12f), contentColor = contentColor,
+                                onClick = { onQuoteClick(message.replyToId) },
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            )
+                        }
+                        Text(message.text.ifBlank { "Unsupported message" }, style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
+            }
+            if (message.reactions.isNotEmpty()) {
+                Reactions(message.reactions, myUid, onClick = longPress)
             }
             val time = message.timestamp?.let { timeFormat.format(it) }.orEmpty()
             Text(
@@ -126,6 +162,62 @@ fun MessageItem(
 }
 
 @Composable
+private fun ReplyQuote(
+    name: String,
+    text: String,
+    color: Color,
+    contentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(color)
+            .clickable(onClick = onClick)
+            .height(IntrinsicSize.Min),
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(contentColor.copy(alpha = 0.8f))
+        )
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+            Text(name, style = MaterialTheme.typography.labelMedium, color = contentColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text, style = MaterialTheme.typography.bodySmall, color = contentColor.copy(alpha = 0.8f),
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun Reactions(reactions: Map<String, String>, myUid: String?, onClick: () -> Unit) {
+    val counts = reactions.values.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }
+    val mine = myUid != null && reactions.containsKey(myUid)
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            1.dp,
+            if (mine) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant,
+        ),
+        modifier = Modifier
+            .padding(top = 2.dp)
+            .clickable(onClick = onClick),
+    ) {
+        Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            counts.take(4).forEach { (emoji, n) ->
+                Text(emoji, style = MaterialTheme.typography.bodyMedium)
+                if (n > 1) Text("$n", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 2.dp))
+            }
+        }
+    }
+}
+
+@Composable
 private fun VoiceBubble(
     message: ChatMessage,
     voice: VoicePlaybackState,
@@ -133,11 +225,15 @@ private fun VoiceBubble(
     contentColor: Color,
     shape: RoundedCornerShape,
     onToggle: (ChatMessage) -> Unit,
+    onLongPress: () -> Unit,
 ) {
     val active = voice.messageId == message.id
     val duration = if (active && voice.durationMs > 0) voice.durationMs else message.durationMs
     val progress = if (active && duration > 0) (voice.positionMs.toFloat() / duration).coerceIn(0f, 1f) else 0f
-    Surface(shape = shape, color = color, contentColor = contentColor) {
+    Surface(
+        shape = shape, color = color, contentColor = contentColor,
+        modifier = Modifier.combinedClickable(onClick = { onToggle(message) }, onLongClick = onLongPress),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 2.dp, end = 12.dp)) {
             IconButton(onClick = { onToggle(message) }) {
                 when {
@@ -173,8 +269,12 @@ private fun MusicBubble(
     contentColor: Color,
     shape: RoundedCornerShape,
     onPlay: (ChatMessage) -> Unit,
+    onLongPress: () -> Unit,
 ) {
-    Surface(shape = shape, color = color, contentColor = contentColor, modifier = Modifier.clickable { onPlay(message) }) {
+    Surface(
+        shape = shape, color = color, contentColor = contentColor,
+        modifier = Modifier.combinedClickable(onClick = { onPlay(message) }, onLongClick = onLongPress),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(10.dp)) {
             Box(
                 Modifier

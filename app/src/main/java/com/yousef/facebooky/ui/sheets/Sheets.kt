@@ -40,6 +40,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -271,14 +272,29 @@ fun MusicSheet(vm: ChatViewModel, onAddMusic: () -> Unit, onDismiss: () -> Unit)
                 items(songs, key = { it.id }) { song ->
                     SongRow(
                         song = song,
+                        addedBy = when {
+                            song.isBundled -> null
+                            song.uploaderUid == vm.myUid -> "Added by you"
+                            else -> vm.people[song.uploaderUid]?.name?.takeIf { it.isNotBlank() }?.let { "Added by $it" }
+                        },
                         isCurrent = current?.songId == song.id,
                         isPlaying = current?.songId == song.id && playing,
                         onClick = { if (current?.songId == song.id) vm.toggleMusic() else vm.playSong(song) },
                     )
                 }
             }
+            vm.musicUpload?.let { (title, progress) ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Uploading \"$title\" · ${(progress * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            }
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onAddMusic, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            OutlinedButton(onClick = onAddMusic, enabled = vm.musicUpload == null, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Icon(Icons.Rounded.Add, null)
                 Spacer(Modifier.width(6.dp))
                 Text("Add Music")
@@ -333,7 +349,7 @@ fun MusicSeekBar(positionMs: Long, durationMs: Long, enabled: Boolean, onSeek: (
 }
 
 @Composable
-private fun SongRow(song: Song, isCurrent: Boolean, isPlaying: Boolean, onClick: () -> Unit) {
+private fun SongRow(song: Song, addedBy: String?, isCurrent: Boolean, isPlaying: Boolean, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -347,12 +363,16 @@ private fun SongRow(song: Song, isCurrent: Boolean, isPlaying: Boolean, onClick:
             tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.width(12.dp))
-        Text(
-            song.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                song.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+            if (addedBy != null) {
+                Text(addedBy, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

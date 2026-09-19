@@ -34,7 +34,13 @@ class BlobStore private constructor(context: Context) {
     private val inFlight = HashMap<String, Deferred<File>>()
 
     /** Uploads [bytes] and returns its reference ("blob:{id}"). */
-    suspend fun upload(ownerUid: String, kind: String, mime: String, bytes: ByteArray): String =
+    suspend fun upload(
+        ownerUid: String,
+        kind: String,
+        mime: String,
+        bytes: ByteArray,
+        onProgress: (Float) -> Unit = {},
+    ): String =
         withContext(Dispatchers.IO) {
             require(bytes.isNotEmpty()) { "empty file" }
             val ref = db.collection(FirebasePaths.BLOBS).document()
@@ -54,6 +60,7 @@ class BlobStore private constructor(context: Context) {
                 ref.collection(FirebasePaths.CHUNKS).document(i.toString())
                     .set(mapOf("i" to i.toLong(), "data" to Blob.fromBytes(part)))
                     .await()
+                onProgress((i + 1f) / chunks)
             }
             File(dir, ref.id).writeBytes(bytes) // sender never needs to download its own file
             "$SCHEME:${ref.id}"

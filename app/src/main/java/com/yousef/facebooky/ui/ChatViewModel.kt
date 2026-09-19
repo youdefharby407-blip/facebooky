@@ -24,6 +24,7 @@ import com.yousef.facebooky.data.UserRepository
 import com.yousef.facebooky.data.model.ChatMessage
 import com.yousef.facebooky.data.model.ConnectionStatus
 import com.yousef.facebooky.data.model.MessageType
+import com.yousef.facebooky.data.model.ReplyTarget
 import com.yousef.facebooky.data.model.Song
 import com.yousef.facebooky.data.model.UserProfile
 import com.yousef.facebooky.music.MusicController
@@ -74,6 +75,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var recordingStartedAt by mutableStateOf<Long?>(null)
         private set
     var draft by mutableStateOf("")
+    /** Everyone's live name + photo (uid -> profile). */
+    var people by mutableStateOf<Map<String, UserProfile>>(emptyMap())
+        private set
+    /** Message I'm replying to (shown above the input bar). */
+    var replyingTo by mutableStateOf<ChatMessage?>(null)
+        private set
+    /** Song currently being uploaded (title to progress 0..1). */
+    var musicUpload by mutableStateOf<Pair<String, Float>?>(null)
+        private set
     /** True while Firestore refuses to give us the chat (rules not published). */
     var chatLocked by mutableStateOf(false)
         private set
@@ -123,16 +133,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { userRepo.fetch(uid) }.getOrNull()?.let { if (profile == null) profile = it }
         }
         viewModelScope.launch {
-            var warned = false
             chatRepo.observe()
                 .retryWhen { e, _ ->
                     Log.w(TAG, "messages listener", e)
                     if (e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
-                        chatLocked = true
-                        if (!warned) {
-                            warned = true
-                            _events.tryEmit(friendlyError(e))
-                        }
+                        chatLocked = true // shown inline, no popup
                     }
                     delay(3000)
                     true
@@ -143,6 +148,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     fromCache = snap.fromCache
                     updateConnection()
                 }
+        }
+        viewModelScope.launch {
+            userRepo.observeAll()
+                .retryWhen { e, _ -> Log.w(TAG, "users listener", e); delay(5000); true }
+                .collect { people = it }
         }
         music.start()
         calls.startListening(uid)
@@ -269,7 +279,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     error = error ?: e
                 }
                 if (error == null) return@launch
-                if (attempt == 0) _events.tryEmit(friendlyError(error))
                 attempt++
                 delay(min(120_000L, 10_000L * attempt))
             }
@@ -291,8 +300,41 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (text.isEmpty()) return
         draft = ""
         withProfile { p ->
-            chatRepo.send(chatRepo.newId(), p, MessageType.TEXT, text = text.take(4000), onError = ::onSendError)
+            chatRepo.send(chatRepo.newId(), p, MessageType.TEXT, text = text.take(4000), reply = takeReply(), onError = ::onSendError)
         }
+    }
+
+    // ---------- reply / react ----------
+
+    fun startReply(m: ChatMessage) {
+        replyingTo = m
+    }
+
+    fun cancelReply() {
+        replyingTo = null
+    }
+
+    private fun takeReply(): ReplyTarget? {
+        val m = replyingTo ?: return null
+        replyingTo = null
+        val name = if (m.senderUid == myUid) (profile?.name ?: m.senderName) else nameOf(m)
+        return ReplyTarget(m.id, name, m.preview.take(200))
+    }
+
+    fun nameOf(m: ChatMessage): String = people[m.senderUid]?.name?.takeIf { it.isNotBlank() } ?: m.senderName
+
+    fun photoOf(m: ChatMessage): String = people[m.senderUid]?.photoUrl?.takeIf { it.isNotBlank() } ?: m.senderPhoto
+
+    /** Tap the same emoji again to remove it. */
+    fun react(m: ChatMessage, emoji: String) {
+        val uid = myUid ?: return
+        val next = if (m.reactions[uid] == emoji) null else emoji
+        chatRepo.react(m.id, uid, next, ::onSendError)
+    }
+
+    fun deleteMessage(m: ChatMessage) {
+        if (m.senderUid != myUid) return
+        chatRepo.delete(m.id, ::onSendError)
     }
 
     fun sendImage(uri: Uri) = withProfile { p ->
@@ -344,12 +386,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         durationMs: Long = 0L,
         produce: suspend () -> ByteArray,
     ) {
+        val reply = takeReply()
         viewModelScope.launch {
             uploadsInProgress++
             try {
                 val bytes = withContext(Dispatchers.IO) { produce() }
                 val ref = blobs.upload(p.uid, kind, contentType, bytes)
-                chatRepo.send(chatRepo.newId(), p, type, mediaUrl = ref, durationMs = durationMs, onError = ::onSendError)
+                chatRepo.send(chatRepo.newId(), p, type, mediaUrl = ref, durationMs = durationMs, reply = reply, onError = ::onSendError)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -383,6 +426,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             uploadsInProgress++
+            musicUpload = info.title to 0f
             try {
                 val bytes = withContext(Dispatchers.IO) {
                     getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
@@ -392,7 +436,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     } ?: throw IllegalStateException("unreadable")
                 }
                 val id = musicRepo.newSongId()
-                val ref = blobs.upload(p.uid, "music", info.mimeType, bytes)
+                val ref = blobs.upload(p.uid, "music", info.mimeType, bytes) { progress ->
+                    viewModelScope.launch { if (musicUpload != null) musicUpload = info.title to progress }
+                }
                 musicRepo.addSong(id, info.title, ref, "", p.uid, bytes.size.toLong())
                 chatRepo.send(
                     chatRepo.newId(), p, MessageType.MUSIC,
@@ -412,6 +458,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 )
             } finally {
                 uploadsInProgress--
+                musicUpload = null
             }
         }
     }

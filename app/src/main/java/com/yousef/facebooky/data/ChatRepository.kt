@@ -1,11 +1,13 @@
 package com.yousef.facebooky.data
 
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.yousef.facebooky.data.model.ChatMessage
+import com.yousef.facebooky.data.model.ReplyTarget
 import com.yousef.facebooky.data.model.UserProfile
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -51,6 +53,7 @@ class ChatRepository(db: FirebaseFirestore) {
         mediaPath: String = "",
         refId: String = "",
         durationMs: Long = 0L,
+        reply: ReplyTarget? = null,
         onError: (Exception) -> Unit = {},
     ) {
         messages.document(id).set(
@@ -64,6 +67,9 @@ class ChatRepository(db: FirebaseFirestore) {
                 "mediaPath" to mediaPath,
                 "refId" to refId,
                 "durationMs" to durationMs,
+                "replyToId" to (reply?.id ?: ""),
+                "replyToName" to (reply?.name ?: "").take(40),
+                "replyToText" to (reply?.text ?: "").take(200),
                 "timestamp" to FieldValue.serverTimestamp(),
             )
         ).addOnFailureListener(onError)
@@ -82,5 +88,22 @@ class ChatRepository(db: FirebaseFirestore) {
         durationMs = getLong("durationMs") ?: 0L,
         timestamp = getTimestamp("timestamp", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toDate(),
         pending = metadata.hasPendingWrites(),
+        replyToId = getString("replyToId").orEmpty(),
+        replyToName = getString("replyToName").orEmpty(),
+        replyToText = getString("replyToText").orEmpty(),
+        reactions = (get("reactions") as? Map<*, *>).orEmpty()
+            .mapNotNull { (k, v) -> if (k is String && v is String && v.isNotBlank()) k to v else null }
+            .toMap(),
     )
+
+    /** Sets (or with null, removes) my reaction. Only my own entry is ever written. */
+    fun react(messageId: String, uid: String, emoji: String?, onError: (Exception) -> Unit) {
+        messages.document(messageId)
+            .update(FieldPath.of("reactions", uid), emoji ?: FieldValue.delete())
+            .addOnFailureListener(onError)
+    }
+
+    fun delete(messageId: String, onError: (Exception) -> Unit) {
+        messages.document(messageId).delete().addOnFailureListener(onError)
+    }
 }

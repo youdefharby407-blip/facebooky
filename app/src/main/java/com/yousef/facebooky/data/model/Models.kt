@@ -37,7 +37,25 @@ data class ChatMessage(
     val durationMs: Long,
     val timestamp: Date?,
     val pending: Boolean,
-)
+    val replyToId: String = "",
+    val replyToName: String = "",
+    val replyToText: String = "",
+    /** uid -> emoji */
+    val reactions: Map<String, String> = emptyMap(),
+) {
+    /** One-line description used for reply previews. */
+    val preview: String
+        get() = when (type) {
+            MessageType.IMAGE -> "📷 Photo"
+            MessageType.STICKER -> "Sticker"
+            MessageType.VOICE -> "🎤 Voice message"
+            MessageType.MUSIC -> "🎵 $text"
+            else -> text
+        }
+}
+
+/** Who a new message replies to. */
+data class ReplyTarget(val id: String, val name: String, val text: String)
 
 data class Song(
     val id: String,
