@@ -95,6 +95,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var roomTheme by mutableStateOf("wallpaper")
         private set
 
+    private val adminPrefs = app.getSharedPreferences("admin_local", android.content.Context.MODE_PRIVATE)
+
     // ----- admin -----
     /** True if THIS device is the single current admin (config/admin.uid == me). */
     var isAdmin by mutableStateOf(false)
@@ -145,7 +147,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val hiddenPrefs = app.getSharedPreferences("hidden_messages", android.content.Context.MODE_PRIVATE)
     private val roomThemePrefs = app.getSharedPreferences("room_theme", android.content.Context.MODE_PRIVATE)
-    private val adminPrefs = app.getSharedPreferences("admin_local", android.content.Context.MODE_PRIVATE)
     private var hiddenIds: Set<String> = hiddenPrefs.getStringSet(HIDDEN_KEY, emptySet()).orEmpty().toSet()
     private var allMessages: List<ChatMessage> = emptyList()
     private var syncJob: Job? = null

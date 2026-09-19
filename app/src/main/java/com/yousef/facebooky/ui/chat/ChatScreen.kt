@@ -425,6 +425,8 @@ private fun MessageList(
                 replyTargetDeleted = m.replyToId.isNotBlank() &&
                     byId[m.replyToId]?.type == MessageType.DELETED,
                 senderIsAdmin = vm.isAdminSender(m.senderUid),
+                onReply = { vm.startReply(it) },
+                onAvatarClick = { vm.showPersonCard(it) },
                 onQuoteClick = { id ->
                     val target = newestFirst.indexOfFirst { it.id == id }
                     if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
