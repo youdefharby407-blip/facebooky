@@ -1,0 +1,31 @@
+name: Test security rules
+on:
+  workflow_dispatch:
+  push:
+    paths: ['firebase/**', 'tools/rules_test.py', '.github/workflows/rules.yml']
+permissions:
+  contents: write
+jobs:
+  rules:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22' }
+      - name: Run emulator tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          npx -y firebase-tools@latest emulators:exec --only firestore --project demo-facebooky \
+            "python3 tools/rules_test.py" 2>&1 | tee rules-test.txt
+      - name: Publish result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f rules-test.txt ] || echo "no output" > rules-test.txt
+          gh release delete rules-test --yes --cleanup-tag || true
+          gh release create rules-test rules-test.txt --prerelease --title "Rules test" --notes "rules"

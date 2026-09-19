@@ -2,6 +2,7 @@ package com.yousef.facebooky.audio
 
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -20,11 +21,18 @@ data class VoicePlaybackState(
     val durationMs: Long = 0L,
 )
 
-/** Plays one voice message at a time (streamed from Storage). */
-class VoiceMessagePlayer(private val scope: CoroutineScope) {
+/**
+ * Plays one voice message at a time. [resolve] turns the message reference into
+ * something MediaPlayer can open (a cached local file for Firestore blobs).
+ */
+class VoiceMessagePlayer(
+    private val scope: CoroutineScope,
+    private val resolve: suspend (String) -> String,
+) {
 
     private var player: MediaPlayer? = null
     private var ticker: Job? = null
+    private var loadJob: Job? = null
     private val _state = MutableStateFlow(VoicePlaybackState())
     val state: StateFlow<VoicePlaybackState> = _state.asStateFlow()
 
@@ -44,33 +52,44 @@ class VoiceMessagePlayer(private val scope: CoroutineScope) {
         }
         release()
         _state.value = VoicePlaybackState(messageId = messageId, loading = true)
-        val mp = MediaPlayer()
-        player = mp
-        try {
-            mp.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            mp.setDataSource(url)
-            mp.setOnPreparedListener {
-                if (player !== it) return@setOnPreparedListener
-                it.start()
-                _state.value = VoicePlaybackState(messageId, false, true, 0L, it.duration.toLong())
-                startTicker()
+        loadJob = scope.launch {
+            val source = try {
+                resolve(url)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (_state.value.messageId == messageId) release()
+                return@launch
             }
-            mp.setOnCompletionListener {
-                ticker?.cancel()
-                _state.update { s -> s.copy(isPlaying = false, positionMs = 0L) }
-            }
-            mp.setOnErrorListener { _, _, _ ->
+            if (_state.value.messageId != messageId) return@launch
+            val mp = MediaPlayer()
+            player = mp
+            try {
+                mp.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                mp.setDataSource(source)
+                mp.setOnPreparedListener {
+                    if (player !== it) return@setOnPreparedListener
+                    it.start()
+                    _state.value = VoicePlaybackState(messageId, false, true, 0L, it.duration.toLong())
+                    startTicker()
+                }
+                mp.setOnCompletionListener {
+                    ticker?.cancel()
+                    _state.update { s -> s.copy(isPlaying = false, positionMs = 0L) }
+                }
+                mp.setOnErrorListener { _, _, _ ->
+                    release()
+                    true
+                }
+                mp.prepareAsync()
+            } catch (e: Exception) {
                 release()
-                true
             }
-            mp.prepareAsync()
-        } catch (e: Exception) {
-            release()
         }
     }
 
@@ -86,6 +105,8 @@ class VoiceMessagePlayer(private val scope: CoroutineScope) {
     }
 
     fun release() {
+        loadJob?.cancel()
+        loadJob = null
         ticker?.cancel()
         player?.release()
         player = null

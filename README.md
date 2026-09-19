@@ -9,8 +9,8 @@ WebRTC voice/video calls, voice messages, images, stickers, and synchronized "li
    (Firebase Console → Project settings → Android app with package `com.yousef.facebooky`).
 2. Firebase Console:
    - **Authentication → Sign-in method → Anonymous**: enabled (already done).
-   - **Storage → Get started**: create the default bucket (required for photos, voice, images, stickers, music).
-     Note: new projects need the Blaze plan to create a Storage bucket.
+   - No Cloud Storage bucket is needed: all media is stored in Firestore (`blobs/`), so the free Spark plan is enough.
+     Free quota: 1 GiB stored, 50k reads + 20k writes per day. Songs are limited to 15 MB.
    - Deploy the rules (below). With the old `if false` rules the app opens but shows "Chat is locked".
 
 ## 2. Deploy security rules
@@ -19,9 +19,9 @@ Either paste the files into the console (Firestore → Rules, Storage → Rules)
 npm i -g firebase-tools
 firebase login
 firebase use --add            # pick your project
-firebase deploy --only firestore:rules,storage
+firebase deploy --only firestore:rules
 ```
-Files: `firebase/firestore.rules`, `firebase/storage.rules` (wired in `firebase.json`).
+File: `firebase/firestore.rules` (wired in `firebase.json`, tested by the "Test security rules" workflow).
 No composite indexes are needed.
 
 ## 3. Build
@@ -52,7 +52,7 @@ util/      Network status, image processing, media helpers
 ```
 Firestore: `users/{uid}`, `rooms/main/messages/{id}`, `rooms/main/music/{id}`,
 `rooms/main/state/player`, `calls/{id}`, `calls/{id}/candidates/{id}`.
-Storage: `media/{uid}/{profile|images|stickers|voice|music}/{file}`.
+Media: `blobs/{id}` + `blobs/{id}/chunks/{i}` (<= 900 KB each), referenced as `blob:{id}` and cached on each phone.
 
 ## 6. Manual test checklist
 Two phones: open app (no login) → read chat → send text (profile sheet appears once) →

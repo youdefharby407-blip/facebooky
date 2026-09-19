@@ -57,11 +57,11 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
-    implementation("com.google.firebase:firebase-storage")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 
     // Images
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("com.squareup.okio:okio:3.9.1")
 
     // WebRTC (prebuilt libwebrtc exposing the org.webrtc API)
     implementation("io.getstream:stream-webrtc-android:1.3.6")

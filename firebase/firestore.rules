@@ -9,7 +9,11 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isMe(uid) { return signedIn() && request.auth.uid == uid; }
     function str(v, maxLen) { return v is string && v.size() <= maxLen; }
-    function httpsOrEmpty(v) { return v is string && v.size() <= 2048 && (v == '' || v.matches('^https://.*')); }
+    // A media reference: "" (none), a file stored in Firestore ("blob:<id>") or an https URL.
+    function httpsOrEmpty(v) {
+      return v is string && v.size() <= 2048
+        && (v == '' || v.matches('^blob:[A-Za-z0-9]{10,40}$') || v.matches('^https://.*'));
+    }
 
     // ---------- users/{uid} : profile (name + photo) ----------
     match /users/{uid} {
@@ -64,10 +68,10 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['title', 'url', 'storagePath', 'uploaderUid', 'sizeBytes', 'createdAt'])
           && request.resource.data.uploaderUid == request.auth.uid
           && str(request.resource.data.title, 200) && request.resource.data.title.size() > 0
-          && request.resource.data.url is string && request.resource.data.url.matches('^https://.*')
-          && request.resource.data.storagePath.matches('^media/' + request.auth.uid + '/music/.*')
+          && httpsOrEmpty(request.resource.data.url) && request.resource.data.url != ''
+          && str(request.resource.data.storagePath, 300)
           && request.resource.data.sizeBytes is int
-          && request.resource.data.sizeBytes <= 20 * 1024 * 1024
+          && request.resource.data.sizeBytes <= 15 * 1024 * 1024
           && request.resource.data.createdAt == request.time;
         allow update: if false;
         allow delete: if signedIn() && resource.data.uploaderUid == request.auth.uid;
@@ -148,6 +152,41 @@ service cloud.firestore {
           && request.resource.data.sdpMLineIndex is int;
         allow update: if false;
         allow delete: if signedIn() && resource.data.fromUid == request.auth.uid;
+      }
+    }
+
+    // ---------- media files (images, stickers, voice, music, profile photos) ----------
+    // Stored in Firestore so no paid Storage bucket is needed. Split in <= 900 KB chunks.
+    match /blobs/{blobId} {
+      function blobMeta() { return get(/databases/$(database)/documents/blobs/$(blobId)).data; }
+
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['ownerUid', 'kind', 'mime', 'size', 'chunks', 'createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.kind in ['profile', 'images', 'stickers', 'voice', 'music']
+        && str(request.resource.data.mime, 100)
+        && request.resource.data.size is int && request.resource.data.size > 0
+        && ((request.resource.data.kind == 'music' && request.resource.data.size <= 15 * 1024 * 1024)
+            || (request.resource.data.kind != 'music' && request.resource.data.size <= 5 * 1024 * 1024))
+        && request.resource.data.chunks is int
+        && request.resource.data.chunks >= 1 && request.resource.data.chunks <= 20
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+
+      match /chunks/{chunkId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && blobMeta().ownerUid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['i', 'data'])
+          && request.resource.data.i is int
+          && request.resource.data.i >= 0 && request.resource.data.i < blobMeta().chunks
+          && chunkId == string(request.resource.data.i)
+          && request.resource.data.data is bytes
+          && request.resource.data.data.size() <= 900000;
+        allow update: if false;
+        allow delete: if signedIn() && blobMeta().ownerUid == request.auth.uid;
       }
     }
 

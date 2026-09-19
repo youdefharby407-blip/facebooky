@@ -12,16 +12,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
-import com.google.firebase.storage.StorageException
 import com.yousef.facebooky.audio.VoiceMessagePlayer
 import com.yousef.facebooky.audio.VoiceRecorder
 import com.yousef.facebooky.call.CallManager
 import com.yousef.facebooky.call.CallSignaling
 import com.yousef.facebooky.data.AuthRepository
 import com.yousef.facebooky.data.ChatRepository
-import com.yousef.facebooky.data.FirebasePaths
 import com.yousef.facebooky.data.MusicRepository
-import com.yousef.facebooky.data.StorageRepository
+import com.yousef.facebooky.data.BlobStore
 import com.yousef.facebooky.data.UserRepository
 import com.yousef.facebooky.data.model.ChatMessage
 import com.yousef.facebooky.data.model.ConnectionStatus
@@ -51,12 +49,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val authRepo = AuthRepository()
     private val userRepo = UserRepository(db, app)
     private val chatRepo = ChatRepository(db)
-    private val storageRepo = StorageRepository()
+    private val blobs = BlobStore.get(app)
     private val musicRepo = MusicRepository(db)
     private val recorder = VoiceRecorder(app)
 
-    val voicePlayer = VoiceMessagePlayer(viewModelScope)
-    val music = MusicController(app, musicRepo, viewModelScope) { authRepo.currentUid }
+    val voicePlayer = VoiceMessagePlayer(viewModelScope, blobs::playablePath)
+    val music = MusicController(app, musicRepo, viewModelScope, { authRepo.currentUid }, blobs::playablePath)
     val calls = CallManager(app, CallSignaling(db), viewModelScope)
 
     var myUid by mutableStateOf<String?>(null)
@@ -251,10 +249,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 if (photoUrl.isBlank() && p.localPhoto.isNotBlank()) {
                     try {
                         val bytes = withContext(Dispatchers.IO) { File(p.localPhoto).readBytes() }
-                        photoUrl = storageRepo.uploadBytes(
-                            FirebasePaths.storagePath(uid, "profile", "avatar_${System.currentTimeMillis()}.jpg"),
-                            bytes, "image/jpeg",
-                        )
+                        photoUrl = blobs.upload(uid, "profile", "image/jpeg", bytes)
                         userRepo.setRemotePhoto(uid, photoUrl)
                     } catch (e: CancellationException) {
                         throw e
@@ -283,14 +278,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Turns Firebase errors into a short message that says what to fix. */
     private fun friendlyError(e: Exception): String = when {
-        e is StorageException && (e.errorCode == StorageException.ERROR_BUCKET_NOT_FOUND ||
-            e.errorCode == StorageException.ERROR_PROJECT_NOT_FOUND ||
-            e.errorCode == StorageException.ERROR_OBJECT_NOT_FOUND || e.httpResultCode == 404) ->
-            "Photos can't upload yet: Firebase Storage isn't set up. Saved on this phone."
-        e is StorageException && e.errorCode == StorageException.ERROR_NOT_AUTHORIZED ->
-            "Photos can't upload yet: publish the Storage rules. Saved on this phone."
         e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED ->
-            "Chat is locked: publish the Firestore rules in Firebase."
+            "Blocked by Firebase: publish the latest Firestore rules."
         !networkUp -> "You're offline. It will be sent when you're back online."
         else -> "Couldn't reach Firebase. Will retry automatically."
     }
@@ -359,15 +348,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             uploadsInProgress++
             try {
                 val bytes = withContext(Dispatchers.IO) { produce() }
-                val id = chatRepo.newId()
-                val path = FirebasePaths.storagePath(p.uid, kind, "$id.$ext")
-                val url = storageRepo.uploadBytes(path, bytes, contentType)
-                chatRepo.send(id, p, type, mediaUrl = url, mediaPath = path, durationMs = durationMs, onError = ::onSendError)
+                val ref = blobs.upload(p.uid, kind, contentType, bytes)
+                chatRepo.send(chatRepo.newId(), p, type, mediaUrl = ref, durationMs = durationMs, onError = ::onSendError)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "upload failed", e)
-                _events.tryEmit(if (e is StorageException) friendlyError(e).substringBefore(" Saved") else "Upload failed. Check your connection.")
+                _events.tryEmit(friendlyError(e))
             } finally {
                 uploadsInProgress--
             }
@@ -392,18 +379,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             if (info.sizeBytes > MAX_MUSIC_BYTES) {
-                _events.tryEmit("That song is too large (max 20 MB)")
+                _events.tryEmit("That song is too large (max 15 MB)")
                 return@launch
             }
             uploadsInProgress++
             try {
+                val bytes = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
+                        val buf = input.readBytes()
+                        if (buf.size > MAX_MUSIC_BYTES) throw IllegalArgumentException("too large")
+                        buf
+                    } ?: throw IllegalStateException("unreadable")
+                }
                 val id = musicRepo.newSongId()
-                val path = FirebasePaths.storagePath(p.uid, "music", "$id.${info.extension}")
-                val url = storageRepo.uploadFile(path, uri, info.mimeType)
-                musicRepo.addSong(id, info.title, url, path, p.uid, info.sizeBytes)
+                val ref = blobs.upload(p.uid, "music", info.mimeType, bytes)
+                musicRepo.addSong(id, info.title, ref, "", p.uid, bytes.size.toLong())
                 chatRepo.send(
                     chatRepo.newId(), p, MessageType.MUSIC,
-                    text = info.title, mediaUrl = url, mediaPath = path, refId = id, onError = ::onSendError,
+                    text = info.title, mediaUrl = ref, refId = id, onError = ::onSendError,
                 )
                 _events.tryEmit("Added \"${info.title}\"")
             } catch (e: CancellationException) {
@@ -411,8 +404,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 Log.w(TAG, "music upload failed", e)
                 _events.tryEmit(
-                    if (e is StorageException && e.errorCode != StorageException.ERROR_UNKNOWN) friendlyError(e).substringBefore(" Saved")
-                    else "Couldn't upload the song (max 20 MB, audio files only)"
+                    when {
+                        e is IllegalArgumentException -> "That song is too large (max 15 MB)"
+                        e is FirebaseFirestoreException -> friendlyError(e)
+                        else -> "Couldn't upload the song (max 15 MB, audio files only)"
+                    }
                 )
             } finally {
                 uploadsInProgress--
@@ -456,6 +452,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val TAG = "ChatViewModel"
-        const val MAX_MUSIC_BYTES = 20L * 1024 * 1024
+        const val MAX_MUSIC_BYTES = 15L * 1024 * 1024
     }
 }

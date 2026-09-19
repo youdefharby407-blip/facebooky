@@ -8,9 +8,10 @@ package com.yousef.facebooky.data
  *   rooms/main/state/player                      shared music playback state
  *   calls/{callId}                               WebRTC signaling (offer/answer/state)
  *   calls/{callId}/candidates/{candidateId}      ICE candidates
+ *   blobs/{blobId}                               media file metadata (see BlobStore)
+ *   blobs/{blobId}/chunks/{i}                    media bytes, split in <= 900 KB parts
  *
- * Storage layout
- *   media/{uid}/{kind}/{file}   kind = profile | images | stickers | voice | music
+ * No Cloud Storage bucket is used: all media lives in Firestore (free Spark plan).
  */
 object FirebasePaths {
     const val USERS = "users"
@@ -22,6 +23,6 @@ object FirebasePaths {
     const val PLAYER_DOC = "player"
     const val CALLS = "calls"
     const val CANDIDATES = "candidates"
-
-    fun storagePath(uid: String, kind: String, fileName: String) = "media/$uid/$kind/$fileName"
+    const val BLOBS = "blobs"
+    const val CHUNKS = "chunks"
 }

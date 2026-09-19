@@ -8,6 +8,7 @@ import com.yousef.facebooky.R
 import com.yousef.facebooky.data.MusicRepository
 import com.yousef.facebooky.data.model.SharedPlayback
 import com.yousef.facebooky.data.model.Song
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -45,6 +46,8 @@ class MusicController(
     private val repo: MusicRepository,
     private val scope: CoroutineScope,
     private val uidProvider: () -> String?,
+    /** Turns a song reference into something MediaPlayer can open (cached file for Firestore blobs). */
+    private val resolve: suspend (String) -> String,
 ) {
     val defaultSong = Song(id = DEFAULT_SONG_ID, title = "عمرو دياب - معاك قلبي", isBundled = true)
 
@@ -62,6 +65,7 @@ class MusicController(
 
     private var player: MediaPlayer? = null
     private var ticker: Job? = null
+    private var loadJob: Job? = null
     private val jobs = mutableListOf<Job>()
     private var lastPublished: SharedPlayback? = null
 
@@ -162,7 +166,7 @@ class MusicController(
     private fun applyState(s: SharedPlayback) {
         _shared.value = s
         if (s.songId.isBlank()) return
-        if (_local.value.songId != s.songId) {
+        if (_local.value.songId != s.songId || _local.value.failed) {
             load(songFor(s)) // onPrepared re-applies the latest state
             return
         }
@@ -190,40 +194,51 @@ class MusicController(
             _local.update { it.copy(loading = false, failed = true) }
             return
         }
-        val mp = MediaPlayer()
-        player = mp
-        try {
-            mp.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
-            if (song.isBundled) {
-                context.resources.openRawResourceFd(R.raw.default_song).use { afd ->
-                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+        loadJob = scope.launch {
+            val source = if (song.isBundled) null else try {
+                resolve(song.url)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "song download failed", e)
+                _local.value = LocalPlayback(songId = song.id, failed = true)
+                return@launch
+            }
+            val mp = MediaPlayer()
+            player = mp
+            try {
+                mp.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                if (source == null) {
+                    context.resources.openRawResourceFd(R.raw.default_song).use { afd ->
+                        mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    }
+                } else {
+                    mp.setDataSource(source)
                 }
-            } else {
-                mp.setDataSource(song.url)
+                mp.setOnPreparedListener { prepared ->
+                    if (player !== prepared) return@setOnPreparedListener
+                    _local.update { it.copy(prepared = true, loading = false, durationMs = prepared.duration.toLong()) }
+                    applyVolume()
+                    startTicker()
+                    _shared.value?.let { if (it.songId == song.id) applyState(it) }
+                }
+                mp.setOnCompletionListener { refreshLocal() }
+                mp.setOnErrorListener { failedPlayer, what, extra ->
+                    Log.w(TAG, "MediaPlayer error $what/$extra")
+                    if (player === failedPlayer) _local.update { it.copy(prepared = false, loading = false, failed = true) }
+                    true
+                }
+                mp.prepareAsync()
+            } catch (e: Exception) {
+                Log.w(TAG, "load failed", e)
+                releasePlayer()
+                _local.value = LocalPlayback(songId = song.id, failed = true)
             }
-            mp.setOnPreparedListener { prepared ->
-                if (player !== prepared) return@setOnPreparedListener
-                _local.update { it.copy(prepared = true, loading = false, durationMs = prepared.duration.toLong()) }
-                applyVolume()
-                startTicker()
-                _shared.value?.let { if (it.songId == song.id) applyState(it) }
-            }
-            mp.setOnCompletionListener { refreshLocal() }
-            mp.setOnErrorListener { failedPlayer, what, extra ->
-                Log.w(TAG, "MediaPlayer error $what/$extra")
-                if (player === failedPlayer) _local.update { it.copy(prepared = false, loading = false, failed = true) }
-                true
-            }
-            mp.prepareAsync()
-        } catch (e: Exception) {
-            Log.w(TAG, "load failed", e)
-            releasePlayer()
-            _local.value = LocalPlayback(songId = song.id, failed = true)
         }
     }
 
@@ -249,6 +264,8 @@ class MusicController(
     }
 
     private fun releasePlayer() {
+        loadJob?.cancel()
+        loadJob = null
         ticker?.cancel()
         ticker = null
         player?.release()
