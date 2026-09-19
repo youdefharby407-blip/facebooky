@@ -42,11 +42,13 @@ service cloud.firestore {
       // Profile write (name + photo), plus optional presence/shortId/admin fields.
       // Keys are validated by presence; admin can only turn true with a valid password proof.
       allow create, update: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['name', 'photoUrl', 'updatedAt', 'shortId', 'lastSeen', 'device', 'admin', 'adminProof'])
+        && request.resource.data.keys().hasOnly(['name', 'photoUrl', 'updatedAt', 'shortId', 'lastSeen', 'device', 'region', 'language', 'admin', 'adminProof'])
         && (!('name' in request.resource.data) || (str(request.resource.data.name, 40) && request.resource.data.name.size() > 0))
         && (!('photoUrl' in request.resource.data) || httpsOrEmpty(request.resource.data.photoUrl))
         && (!('shortId' in request.resource.data) || str(request.resource.data.shortId, 12))
         && (!('device' in request.resource.data) || str(request.resource.data.device, 80))
+        && (!('region' in request.resource.data) || str(request.resource.data.region, 60))
+        && (!('language' in request.resource.data) || str(request.resource.data.language, 20))
         && (
           // admin stays absent/false, OR it becomes true with a matching password proof
           !('admin' in request.resource.data)

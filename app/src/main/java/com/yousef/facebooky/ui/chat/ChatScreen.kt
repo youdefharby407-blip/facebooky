@@ -483,7 +483,6 @@ private fun ChatHeader(
                 )
                 ConnectionLine(connection, locked, prefix = if (inPrivateRoom) "My Space" else if (hasProfile) "My Space" else null)
             }
-            HeaderButton(AppIcons.User, "Chats", onRooms)
             HeaderButton(AppIcons.Music, "Music", onMusic, tint = if (musicActive) MaterialTheme.colorScheme.primary else null)
             HeaderButton(AppIcons.Video, "Video call", onVideoCall)
             HeaderButton(AppIcons.Phone, "Voice call", onVoiceCall)
@@ -494,6 +493,11 @@ private fun ChatHeader(
                     onDismissRequest = { menu = false },
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("New chat / My ID") },
+                        leadingIcon = { Icon(AppIcons.AddUser, null, Modifier.size(20.dp)) },
+                        onClick = { menu = false; onRooms() },
+                    )
                     DropdownMenuItem(
                         text = { Text(if (hasProfile) "Edit profile" else "Set up profile") },
                         leadingIcon = { Icon(AppIcons.User, null, Modifier.size(20.dp)) },

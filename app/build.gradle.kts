@@ -13,8 +13,8 @@ android {
         applicationId = "com.yousef.facebooky"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "3.0"
+        versionCode = 8
+        versionName = "3.1"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     // Fixed debug key so every new build installs as an update over the previous one.

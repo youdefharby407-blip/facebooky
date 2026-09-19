@@ -89,6 +89,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     // ----- admin -----
     var isAdmin by mutableStateOf(false)
         private set
+    /** This device's timezone id, to compare against other devices in the admin console. */
+    val myRegion: String = java.util.TimeZone.getDefault().id
     var adminUsers by mutableStateOf<List<Presence>>(emptyList())
         private set
     var adminRooms by mutableStateOf<List<RoomInfo>>(emptyList())
@@ -198,8 +200,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Presence heartbeat every ~30s so the admin can see who's online.
         viewModelScope.launch {
+            val lang = java.util.Locale.getDefault().toLanguageTag()
             while (true) {
-                admin.heartbeat(uid, deviceName)
+                admin.heartbeat(uid, deviceName, myRegion, lang)
                 delay(30_000)
             }
         }

@@ -88,6 +88,8 @@ data class Presence(
     val shortId: String,
     val lastSeenMs: Long,
     val device: String,
+    val region: String = "",
+    val language: String = "",
 )
 
 /** Who a new message replies to. */

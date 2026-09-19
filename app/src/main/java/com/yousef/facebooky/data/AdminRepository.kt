@@ -19,11 +19,13 @@ import kotlinx.coroutines.tasks.await
 class AdminRepository(private val db: FirebaseFirestore) {
 
     /** Heartbeat: records that this device is online now. Best-effort. */
-    fun heartbeat(uid: String, device: String) {
+    fun heartbeat(uid: String, device: String, region: String, language: String) {
         db.collection(FirebasePaths.USERS).document(uid).set(
             mapOf(
                 "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
                 "device" to device,
+                "region" to region,
+                "language" to language,
             ),
             SetOptions.merge(),
         )
@@ -61,6 +63,8 @@ class AdminRepository(private val db: FirebaseFirestore) {
                         shortId = d.getString("shortId").orEmpty(),
                         lastSeenMs = d.getTimestamp("lastSeen")?.toDate()?.time ?: 0L,
                         device = d.getString("device").orEmpty(),
+                        region = d.getString("region").orEmpty(),
+                        language = d.getString("language").orEmpty(),
                     )
                 }
             )

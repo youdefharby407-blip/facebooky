@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -53,6 +54,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import com.yousef.facebooky.data.model.RoomInfo
 import com.yousef.facebooky.ui.ChatViewModel
 import com.yousef.facebooky.ui.icons.AppIcons
@@ -68,23 +71,31 @@ fun AdminTag(modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "admin")
     val t by transition.animateFloat(
         initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart),
         label = "hue",
     )
     val rainbow = listOf(
-        Color(0xFFFF0040), Color(0xFFFF8A00), Color(0xFFFFE600),
-        Color(0xFF00E676), Color(0xFF00B0FF), Color(0xFF7C4DFF), Color(0xFFFF0040),
+        Color(0xFFFF1744), Color(0xFFFF9100), Color(0xFFFFEA00),
+        Color(0xFF00E676), Color(0xFF00B0FF), Color(0xFF7C4DFF), Color(0xFFFF1744),
     )
     val shift = (t * rainbow.size).toInt().coerceIn(0, rainbow.size - 1)
     val rotated = rainbow.drop(shift) + rainbow.take(shift)
-    Box(
-        modifier
-            .padding(start = 4.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(Brush.horizontalGradient(rotated))
-            .padding(horizontal = 5.dp, vertical = 1.dp),
-    ) {
-        Text("ADMIN", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color.Black)
+    val brush = Brush.horizontalGradient(rotated)
+    Box(modifier.padding(start = 5.dp)) {
+        // Black outline: the same text drawn slightly offset in four directions.
+        val outline = MaterialTheme.typography.labelMedium.copy(
+            fontWeight = FontWeight.Black, color = Color.Black,
+        )
+        listOf(-1f to 0f, 1f to 0f, 0f to -1f, 0f to 1f).forEach { (dx, dy) ->
+            Text("ADMIN", style = outline, modifier = Modifier.offset(dx.dp, dy.dp))
+        }
+        Text(
+            "ADMIN",
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontWeight = FontWeight.Black,
+                brush = brush,
+            ),
+        )
     }
 }
 
@@ -257,33 +268,26 @@ fun AdminScreen(vm: ChatViewModel, onClose: () -> Unit) {
             ) {
                 IconButton(onClick = onClose) { Icon(AppIcons.Close, "Close", Modifier.size(22.dp)) }
                 Spacer(Modifier.width(4.dp))
-                Text("Admin console", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                AdminTag()
+                Spacer(Modifier.width(8.dp))
+                Text("Console", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
             LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 item {
-                    Text("Chats (${vm.adminRooms.size})", style = MaterialTheme.typography.titleSmall,
+                    Text("All chats (${vm.adminRooms.size})", style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 8.dp))
                 }
                 items(vm.adminRooms, key = { it.id }) { room ->
-                    AdminRoomRow(vm, room, fmt) { vm.adminOpenRoom(room) }
+                    AdminRoomCard(vm, room, fmt) { vm.adminOpenRoom(room) }
+                    Spacer(Modifier.height(8.dp))
                 }
                 item {
                     Spacer(Modifier.height(16.dp))
-                    Text("Devices (${vm.adminUsers.size})", style = MaterialTheme.typography.titleSmall,
+                    Text("All devices (${vm.adminUsers.size})", style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 8.dp))
                 }
                 items(vm.adminUsers, key = { it.uid }) { u ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                        Text(u.name.ifBlank { "(no name yet)" }, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "ID ${u.shortId.ifBlank { "—" }} · ${u.device.ifBlank { "device" }}",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            "last seen ${if (u.lastSeenMs > 0) fmt.format(Date(u.lastSeenMs)) else "—"}",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    AdminDeviceRow(u, myRegion = vm.myRegion, fmt = fmt)
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 item { Spacer(Modifier.height(40.dp)) }
@@ -292,28 +296,94 @@ fun AdminScreen(vm: ChatViewModel, onClose: () -> Unit) {
     }
 }
 
+/** A chat shown as a rounded card with the two members' photos side by side. */
 @Composable
-private fun AdminRoomRow(vm: ChatViewModel, room: RoomInfo, fmt: SimpleDateFormat, onOpen: () -> Unit) {
-    val names = room.members.map { uid -> vm.people[uid]?.name?.takeIf { it.isNotBlank() } ?: uid.take(6) }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onOpen)
-            .padding(vertical = 12.dp, horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun AdminRoomCard(vm: ChatViewModel, room: RoomInfo, fmt: SimpleDateFormat, onOpen: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                if (room.isMain) "My Space (everyone)" else names.joinToString(" ↔ "),
-                style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                "${room.members.size} device(s)" +
-                    if (room.lastActivityMs > 0) " · ${fmt.format(Date(room.lastActivityMs))}" else "",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (room.isMain) {
+                Box(
+                    Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) { Text("👥", style = MaterialTheme.typography.titleLarge) }
+            } else {
+                // Two member photos inside one rectangle.
+                Row(
+                    Modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    room.members.take(2).forEach { uid ->
+                        val photo = vm.people[uid]?.photoUrl.orEmpty()
+                        Box(Modifier.size(52.dp)) {
+                            if (photo.isNotBlank()) {
+                                AsyncImage(model = photo, contentDescription = null,
+                                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            } else {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(AppIcons.User, null, Modifier.size(22.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                val names = room.members.map { uid -> vm.people[uid]?.name?.takeIf { it.isNotBlank() } ?: uid.take(6) }
+                Text(
+                    if (room.isMain) "My Space (everyone)" else names.joinToString("  ↔  "),
+                    style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    (if (room.isMain) "shared lobby" else "${room.members.size} people") +
+                        (if (room.lastActivityMs > 0) " · ${fmt.format(Date(room.lastActivityMs))}" else ""),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Tap to open and read from the start", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary)
+            }
         }
-        Icon(AppIcons.Reply, "Open", Modifier.size(18.dp))
+    }
+}
+
+@Composable
+private fun AdminDeviceRow(u: com.yousef.facebooky.data.model.Presence, myRegion: String, fmt: SimpleDateFormat) {
+    // Flag a device whose timezone differs from mine (possible different location).
+    val different = myRegion.isNotBlank() && u.region.isNotBlank() && u.region != myRegion
+    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+            if (u.photoUrl.isNotBlank()) {
+                AsyncImage(model = u.photoUrl, contentDescription = null,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(AppIcons.User, null, Modifier.size(20.dp))
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(u.name.ifBlank { "(no name yet)" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "ID ${u.shortId.ifBlank { "—" }} · ${u.device.ifBlank { "device" }}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    (u.region.ifBlank { "region —" }) + (if (u.language.isNotBlank()) " · ${u.language}" else ""),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (different) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (different) {
+                    Spacer(Modifier.width(6.dp))
+                    Text("⚠ different area", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            Text("last seen ${if (u.lastSeenMs > 0) fmt.format(Date(u.lastSeenMs)) else "—"}",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
