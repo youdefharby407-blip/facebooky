@@ -12,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.storage.StorageException
 import com.yousef.facebooky.audio.VoiceMessagePlayer
 import com.yousef.facebooky.audio.VoiceRecorder
 import com.yousef.facebooky.call.CallManager
@@ -33,6 +34,7 @@ import com.yousef.facebooky.util.MediaUtils
 import com.yousef.facebooky.util.networkAvailableFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -40,6 +42,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.math.min
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -73,6 +76,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var recordingStartedAt by mutableStateOf<Long?>(null)
         private set
     var draft by mutableStateOf("")
+    /** True while Firestore refuses to give us the chat (rules not published). */
+    var chatLocked by mutableStateOf(false)
+        private set
 
     private val _events = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val events: Flow<String> = merge(_events, calls.messages)
@@ -110,28 +116,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         myUid = uid
         profile = userRepo.cached(uid)
         updateConnection()
+        if (profile != null) syncProfile()
         onSignedIn(uid)
     }
 
     private fun onSignedIn(uid: String) {
-        viewModelScope.launch {
-            runCatching { userRepo.fetch(uid) }.getOrNull()?.let { profile = it }
+        if (profile == null) viewModelScope.launch {
+            runCatching { userRepo.fetch(uid) }.getOrNull()?.let { if (profile == null) profile = it }
         }
         viewModelScope.launch {
             var warned = false
             chatRepo.observe()
                 .retryWhen { e, _ ->
                     Log.w(TAG, "messages listener", e)
-                    if (!warned && e is FirebaseFirestoreException &&
-                        e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED
-                    ) {
-                        warned = true
-                        _events.tryEmit("Chat is locked. Deploy the Firestore rules from the project.")
+                    if (e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        chatLocked = true
+                        if (!warned) {
+                            warned = true
+                            _events.tryEmit(friendlyError(e))
+                        }
                     }
                     delay(3000)
                     true
                 }
                 .collect { snap ->
+                    chatLocked = false
                     messages = snap.messages
                     fromCache = snap.fromCache
                     updateConnection()
@@ -188,44 +197,102 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         pendingAction = null
     }
 
+    /**
+     * Saves the profile on the phone immediately (so it works offline and the sheet closes at once),
+     * then uploads it to Firebase in the background, retrying until it succeeds.
+     */
     fun saveProfile(name: String, photo: Uri?) {
         val uid = myUid ?: return
         val trimmed = name.trim().take(40)
-        val existingPhoto = profile?.photoUrl.orEmpty()
         if (trimmed.isEmpty()) {
             _events.tryEmit("Please enter your name")
             return
         }
-        if (photo == null && existingPhoto.isBlank()) {
+        if (photo == null && profile?.displayPhoto.isNullOrBlank()) {
             _events.tryEmit("Please choose a photo")
             return
         }
         savingProfile = true
         viewModelScope.launch {
             try {
-                val url = if (photo != null) {
-                    val bytes = withContext(Dispatchers.IO) { ImageUtils.avatar(getApplication(), photo) }
-                    storageRepo.uploadBytes(
-                        FirebasePaths.storagePath(uid, "profile", "avatar_${System.currentTimeMillis()}.jpg"),
-                        bytes, "image/jpeg",
-                    )
-                } else existingPhoto
-                val p = UserProfile(uid, trimmed, url)
-                userRepo.save(p)
+                val bytes = photo?.let { withContext(Dispatchers.IO) { ImageUtils.avatar(getApplication(), it) } }
+                val p = withContext(Dispatchers.IO) { userRepo.saveLocal(uid, trimmed, bytes) }
                 profile = p
                 showProfileSheet = false
                 val action = pendingAction
                 pendingAction = null
                 action?.invoke()
+                syncJob?.cancel()
+                syncProfile()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "saveProfile", e)
-                _events.tryEmit("Couldn't save your profile. Check your connection.")
+                _events.tryEmit("Couldn't read that photo. Try another one.")
             } finally {
                 savingProfile = false
             }
         }
+    }
+
+    private var syncJob: Job? = null
+
+    /** Background upload of the local profile (photo -> Storage, name/photo -> Firestore). */
+    private fun syncProfile() {
+        if (syncJob?.isActive == true) return
+        syncJob = viewModelScope.launch {
+            var attempt = 0
+            while (true) {
+                val uid = myUid ?: return@launch
+                val p = profile ?: return@launch
+                if (!userRepo.needsSync(uid)) return@launch
+                var photoUrl = p.photoUrl
+                var error: Exception? = null
+                if (photoUrl.isBlank() && p.localPhoto.isNotBlank()) {
+                    try {
+                        val bytes = withContext(Dispatchers.IO) { File(p.localPhoto).readBytes() }
+                        photoUrl = storageRepo.uploadBytes(
+                            FirebasePaths.storagePath(uid, "profile", "avatar_${System.currentTimeMillis()}.jpg"),
+                            bytes, "image/jpeg",
+                        )
+                        userRepo.setRemotePhoto(uid, photoUrl)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "profile photo upload", e)
+                        error = e
+                    }
+                }
+                val synced = p.copy(uid = uid, photoUrl = photoUrl)
+                try {
+                    userRepo.push(synced, complete = error == null)
+                    if (profile?.name == p.name && profile?.localPhoto == p.localPhoto) profile = synced
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "profile push", e)
+                    error = error ?: e
+                }
+                if (error == null) return@launch
+                if (attempt == 0) _events.tryEmit(friendlyError(error))
+                attempt++
+                delay(min(120_000L, 10_000L * attempt))
+            }
+        }
+    }
+
+    /** Turns Firebase errors into a short message that says what to fix. */
+    private fun friendlyError(e: Exception): String = when {
+        e is StorageException && (e.errorCode == StorageException.ERROR_BUCKET_NOT_FOUND ||
+            e.errorCode == StorageException.ERROR_PROJECT_NOT_FOUND ||
+            e.errorCode == StorageException.ERROR_OBJECT_NOT_FOUND || e.httpResultCode == 404) ->
+            "Photos can't upload yet: Firebase Storage isn't set up. Saved on this phone."
+        e is StorageException && e.errorCode == StorageException.ERROR_NOT_AUTHORIZED ->
+            "Photos can't upload yet: publish the Storage rules. Saved on this phone."
+        e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+            "Chat is locked: publish the Firestore rules in Firebase."
+        !networkUp -> "You're offline. It will be sent when you're back online."
+        else -> "Couldn't reach Firebase. Will retry automatically."
     }
 
     // ---------- sending ----------
@@ -300,7 +367,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "upload failed", e)
-                _events.tryEmit("Upload failed. Check your connection.")
+                _events.tryEmit(if (e is StorageException) friendlyError(e).substringBefore(" Saved") else "Upload failed. Check your connection.")
             } finally {
                 uploadsInProgress--
             }
@@ -309,7 +376,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun onSendError(e: Exception) {
         Log.w(TAG, "send failed", e)
-        _events.tryEmit("Message was not accepted by the server")
+        _events.tryEmit(
+            if (e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) friendlyError(e)
+            else "Message was not accepted by the server"
+        )
     }
 
     // ---------- music ----------
@@ -340,7 +410,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "music upload failed", e)
-                _events.tryEmit("Couldn't upload the song (max 20 MB, audio files only)")
+                _events.tryEmit(
+                    if (e is StorageException && e.errorCode != StorageException.ERROR_UNKNOWN) friendlyError(e).substringBefore(" Saved")
+                    else "Couldn't upload the song (max 20 MB, audio files only)"
+                )
             } finally {
                 uploadsInProgress--
             }

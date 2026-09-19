@@ -13,9 +13,15 @@ object MessageType {
 data class UserProfile(
     val uid: String,
     val name: String,
+    /** Download URL in Firebase Storage ("" until the photo has been uploaded). */
     val photoUrl: String,
+    /** Path of the photo saved on this phone, so the profile works instantly and offline. */
+    val localPhoto: String = "",
 ) {
-    val isComplete: Boolean get() = name.isNotBlank() && photoUrl.isNotBlank()
+    val isComplete: Boolean get() = name.isNotBlank() && (photoUrl.isNotBlank() || localPhoto.isNotBlank())
+
+    /** What to show in the UI: the local file if we have it, else the remote URL. */
+    val displayPhoto: String get() = if (localPhoto.isNotBlank()) "file://$localPhoto" else photoUrl
 }
 
 data class ChatMessage(

@@ -59,7 +59,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import com.yousef.facebooky.data.model.UserProfile
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -109,6 +111,9 @@ fun ChatScreen(vm: ChatViewModel) {
     Scaffold(
         topBar = {
             ChatHeader(
+                profile = vm.profile,
+                locked = vm.chatLocked,
+                onProfile = { vm.openProfileEditor() },
                 connection = vm.connection,
                 musicActive = shared?.playing == true,
                 onMusic = { showMusic = true },
@@ -225,8 +230,15 @@ private fun MessageList(
     if (messages.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(
-                if (vm.connection == ConnectionStatus.CONNECTED) "No messages yet. Say hi 👋" else "Loading chat…",
+                when {
+                    vm.chatLocked -> "Chat is locked.\nPublish the Firestore rules in Firebase Console."
+                    vm.connection == ConnectionStatus.OFFLINE -> "You're offline.\nMessages will appear when you reconnect."
+                    vm.connection == ConnectionStatus.CONNECTED -> "No messages yet. Say hi 👋"
+                    else -> "Loading chat…"
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(24.dp),
             )
         }
         return
@@ -258,6 +270,9 @@ private fun MessageList(
 
 @Composable
 private fun ChatHeader(
+    profile: UserProfile?,
+    locked: Boolean,
+    onProfile: () -> Unit,
     connection: ConnectionStatus,
     musicActive: Boolean,
     onMusic: () -> Unit,
@@ -274,19 +289,30 @@ private fun ChatHeader(
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.ChatBubble, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(19.dp))
+            val hasProfile = profile?.isComplete == true
+            if (hasProfile) {
+                Avatar(profile!!.displayPhoto, 38.dp, Modifier.clickable(onClick = onProfile))
+            } else {
+                Box(
+                    Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.ChatBubble, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(19.dp))
+                }
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("FaceBooky", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                ConnectionLine(connection)
+                Text(
+                    if (hasProfile) "Welcome, ${profile!!.name}" else "FaceBooky",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                ConnectionLine(connection, locked, showAppName = hasProfile)
             }
             IconButton(onClick = onMusic) {
                 Icon(
@@ -316,13 +342,15 @@ private fun ChatHeader(
 }
 
 @Composable
-private fun ConnectionLine(connection: ConnectionStatus) {
-    Crossfade(targetState = connection, label = "connection") { c ->
-        val (label, color) = when (c) {
-            ConnectionStatus.CONNECTED -> "Connected" to Color(0xFF22C55E)
-            ConnectionStatus.CONNECTING -> "Connecting…" to Color(0xFFF59E0B)
-            ConnectionStatus.OFFLINE -> "Offline" to MaterialTheme.colorScheme.error
+private fun ConnectionLine(connection: ConnectionStatus, locked: Boolean, showAppName: Boolean) {
+    Crossfade(targetState = connection to locked, label = "connection") { (c, isLocked) ->
+        val (status, color) = when {
+            c == ConnectionStatus.OFFLINE -> "Offline" to MaterialTheme.colorScheme.error
+            isLocked -> "Locked" to MaterialTheme.colorScheme.error
+            c == ConnectionStatus.CONNECTED -> "Connected" to Color(0xFF22C55E)
+            else -> "Connecting…" to Color(0xFFF59E0B)
         }
+        val label = if (showAppName) "FaceBooky · $status" else status
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier

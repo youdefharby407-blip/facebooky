@@ -125,7 +125,7 @@ fun ProfileSheet(
     var name by rememberSaveable { mutableStateOf(current?.name.orEmpty()) }
     var photo by remember { mutableStateOf<Uri?>(null) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { if (it != null) photo = it }
-    val existingPhoto = current?.photoUrl?.takeIf { it.isNotBlank() }
+    val existingPhoto = current?.displayPhoto?.takeIf { it.isNotBlank() }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
