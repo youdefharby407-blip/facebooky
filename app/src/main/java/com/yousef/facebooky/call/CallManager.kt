@@ -93,7 +93,7 @@ class CallManager(
     fun startCall(me: UserProfile, video: Boolean) {
         if (_state.value.phase != CallPhase.IDLE) return
         val id = signaling.newCallId()
-        _state.value = CallUiState(phase = CallPhase.OUTGOING, callId = id, isVideo = video, peerName = "FaceBooky chat", speakerOn = video)
+        _state.value = CallUiState(phase = CallPhase.OUTGOING, callId = id, isVideo = video, peerName = "My Space", speakerOn = video)
         callJobs += scope.launch {
             try {
                 setupAudio(speaker = video)

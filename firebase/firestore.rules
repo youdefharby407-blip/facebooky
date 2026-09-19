@@ -31,7 +31,8 @@ service cloud.firestore {
       allow write: if false;
 
       // ---------- chat messages ----------
-      match /messages/{messageId} {
+      // (The old "messages" collection is intentionally no longer matched: that chat was retired.)
+      match /chat/{messageId} {
         allow read: if signedIn();
 
         allow create: if signedIn()
@@ -61,12 +62,26 @@ service cloud.firestore {
 
         // Content is immutable. The only change allowed is each user setting/removing
         // their OWN reaction (reactions.<uid> = emoji). Only the author may delete a message.
-        allow update: if signedIn()
+        allow update: if signedIn() && (
+          // (a) the author deletes the message for everyone: content wiped, placeholder kept
+          (resource.data.senderUid == request.auth.uid
+            && resource.data.type != 'deleted'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['type', 'text', 'mediaUrl', 'replyToText', 'reactions'])
+            && request.resource.data.type == 'deleted'
+            && request.resource.data.text == ''
+            && request.resource.data.mediaUrl == ''
+            && request.resource.data.get('replyToText', '') == ''
+            && request.resource.data.get('reactions', {}).size() == 0)
+          ||
+          // (b) anyone sets/removes their OWN reaction on a normal message
+          (resource.data.type != 'deleted'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
           && request.resource.data.reactions is map
           && request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])
           && (!(request.auth.uid in request.resource.data.reactions)
-              || str(request.resource.data.reactions[request.auth.uid], 16));
+              || str(request.resource.data.reactions[request.auth.uid], 16)))
+        );
         allow delete: if signedIn() && resource.data.senderUid == request.auth.uid;
       }
 

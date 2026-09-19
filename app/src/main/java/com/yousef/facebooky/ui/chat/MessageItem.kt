@@ -49,6 +49,9 @@ import coil.compose.AsyncImage
 import com.yousef.facebooky.audio.VoicePlaybackState
 import com.yousef.facebooky.data.model.ChatMessage
 import com.yousef.facebooky.data.model.MessageType
+import com.yousef.facebooky.ui.icons.AppIcons
+import com.yousef.facebooky.ui.theme.TheirBubble
+import androidx.compose.ui.text.font.FontStyle
 import com.yousef.facebooky.util.formatTime
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -72,6 +75,7 @@ fun MessageItem(
     onLongPress: (ChatMessage) -> Unit,
     onQuoteClick: (String) -> Unit,
     modifier: Modifier = Modifier,
+    replyTargetDeleted: Boolean = false,
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val longPress = { onLongPress(message) }
@@ -98,14 +102,15 @@ fun MessageItem(
                     modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
                 )
             }
-            val bubbleColor = if (isMine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+            val bubbleColor = if (isMine) MaterialTheme.colorScheme.primary else TheirBubble
             val contentColor = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
             val shape = if (isMine) MineShape else TheirsShape
-            val hasQuote = message.replyToId.isNotBlank()
+            val hasQuote = message.replyToId.isNotBlank() && message.type != MessageType.DELETED
+            val quoteText = if (replyTargetDeleted) "Deleted message" else message.replyToText
             if (hasQuote && message.type != MessageType.TEXT) {
                 ReplyQuote(
-                    name = message.replyToName, text = message.replyToText,
-                    color = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface,
+                    name = message.replyToName, text = quoteText,
+                    color = TheirBubble, contentColor = MaterialTheme.colorScheme.onSurface,
                     onClick = { onQuoteClick(message.replyToId) },
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
@@ -132,6 +137,23 @@ fun MessageItem(
                 )
                 MessageType.VOICE -> VoiceBubble(message, voice, bubbleColor, contentColor, shape, onToggleVoice, longPress)
                 MessageType.MUSIC -> MusicBubble(message, bubbleColor, contentColor, shape, onPlaySong, longPress)
+                MessageType.DELETED -> Surface(
+                    shape = shape,
+                    color = TheirBubble,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.combinedClickable(onClick = {}, onLongClick = longPress),
+                ) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(AppIcons.Ban, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (isMine) "You deleted this message" else "This message was deleted",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontStyle = FontStyle.Italic,
+                        )
+                    }
+                }
                 else -> Surface(
                     shape = shape, color = bubbleColor, contentColor = contentColor,
                     modifier = Modifier.combinedClickable(onClick = {}, onLongClick = longPress),
@@ -139,7 +161,7 @@ fun MessageItem(
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).width(IntrinsicSize.Max)) {
                         if (hasQuote) {
                             ReplyQuote(
-                                name = message.replyToName, text = message.replyToText,
+                                name = message.replyToName, text = quoteText,
                                 color = contentColor.copy(alpha = 0.12f), contentColor = contentColor,
                                 onClick = { onQuoteClick(message.replyToId) },
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
@@ -149,7 +171,7 @@ fun MessageItem(
                     }
                 }
             }
-            if (message.reactions.isNotEmpty()) {
+            if (message.reactions.isNotEmpty() && message.type != MessageType.DELETED) {
                 Reactions(message.reactions, myUid, onClick = longPress)
             }
             val time = message.timestamp?.let { timeFormat.format(it) }.orEmpty()

@@ -7,6 +7,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.yousef.facebooky.data.model.ChatMessage
+import com.yousef.facebooky.data.model.MessageType
 import com.yousef.facebooky.data.model.ReplyTarget
 import com.yousef.facebooky.data.model.UserProfile
 import kotlinx.coroutines.channels.awaitClose
@@ -103,7 +104,16 @@ class ChatRepository(db: FirebaseFirestore) {
             .addOnFailureListener(onError)
     }
 
-    fun delete(messageId: String, onError: (Exception) -> Unit) {
-        messages.document(messageId).delete().addOnFailureListener(onError)
+    /** Removes the content for everyone and leaves a "message deleted" placeholder. */
+    fun deleteForEveryone(messageId: String, onError: (Exception) -> Unit) {
+        messages.document(messageId).update(
+            mapOf(
+                "type" to MessageType.DELETED,
+                "text" to "",
+                "mediaUrl" to "",
+                "replyToText" to "",
+                "reactions" to emptyMap<String, String>(),
+            )
+        ).addOnFailureListener(onError)
     }
 }

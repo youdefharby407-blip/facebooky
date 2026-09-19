@@ -91,6 +91,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val _events = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val events: Flow<String> = merge(_events, calls.messages)
 
+    private val hiddenPrefs = app.getSharedPreferences("hidden_messages", android.content.Context.MODE_PRIVATE)
+    private var hiddenIds: Set<String> = hiddenPrefs.getStringSet(HIDDEN_KEY, emptySet()).orEmpty().toSet()
+    private var allMessages: List<ChatMessage> = emptyList()
     private var networkUp = true
     private var fromCache = true
     private var pendingAction: (() -> Unit)? = null
@@ -144,7 +147,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 .collect { snap ->
                     chatLocked = false
-                    messages = snap.messages
+                    allMessages = snap.messages
+                    messages = snap.messages.filterNot { it.id in hiddenIds }
                     fromCache = snap.fromCache
                     updateConnection()
                 }
@@ -328,13 +332,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Tap the same emoji again to remove it. */
     fun react(m: ChatMessage, emoji: String) {
         val uid = myUid ?: return
+        if (m.type == MessageType.DELETED) return
         val next = if (m.reactions[uid] == emoji) null else emoji
         chatRepo.react(m.id, uid, next, ::onSendError)
     }
 
-    fun deleteMessage(m: ChatMessage) {
-        if (m.senderUid != myUid) return
-        chatRepo.delete(m.id, ::onSendError)
+    fun deleteForEveryone(m: ChatMessage) {
+        if (m.senderUid != myUid || m.type == MessageType.DELETED) return
+        if (replyingTo?.id == m.id) replyingTo = null
+        chatRepo.deleteForEveryone(m.id, ::onSendError)
+    }
+
+    /** Hides a message on this phone only. */
+    fun deleteForMe(m: ChatMessage) {
+        if (replyingTo?.id == m.id) replyingTo = null
+        hiddenIds = hiddenIds + m.id
+        hiddenPrefs.edit().putStringSet(HIDDEN_KEY, hiddenIds).apply()
+        messages = allMessages.filterNot { it.id in hiddenIds }
     }
 
     fun sendImage(uri: Uri) = withProfile { p ->
@@ -499,6 +513,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val TAG = "ChatViewModel"
+        const val HIDDEN_KEY = "ids"
         const val MAX_MUSIC_BYTES = 15L * 1024 * 1024
     }
 }

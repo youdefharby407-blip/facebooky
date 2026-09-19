@@ -53,34 +53,46 @@ expect("music blob 12MB", write("alice", "blobs/mmmmmmmmmm1234567890", {"ownerUi
 def msg(sender, mtype, text="", media=""):
     return {"senderUid": S(sender), "senderName": S("Alice"), "senderPhoto": S(f"blob:{BLOB}"), "type": S(mtype),
             "text": S(text), "mediaUrl": S(media), "mediaPath": S(""), "refId": S(""), "durationMs": I(0)}
-expect("text message", write("alice", "rooms/main/messages/m1", msg("alice", "text", "hi"), "timestamp"), True)
-expect("image message", write("alice", "rooms/main/messages/m2", msg("alice", "image", media=f"blob:{BLOB}"), "timestamp"), True)
-expect("spoofed sender", write("alice", "rooms/main/messages/m3", msg("bob", "text", "hi"), "timestamp"), False)
-expect("edit others' message", write("bob", "rooms/main/messages/m1", msg("bob", "text", "hacked"), "timestamp"), False)
+expect("text message", write("alice", "rooms/main/chat/m1", msg("alice", "text", "hi"), "timestamp"), True)
+expect("image message", write("alice", "rooms/main/chat/m2", msg("alice", "image", media=f"blob:{BLOB}"), "timestamp"), True)
+expect("spoofed sender", write("alice", "rooms/main/chat/m3", msg("bob", "text", "hi"), "timestamp"), False)
+expect("edit others' message", write("bob", "rooms/main/chat/m1", msg("bob", "text", "hacked"), "timestamp"), False)
 expect("song", write("alice", "rooms/main/music/s1", {"title": S("Song"), "url": S(f"blob:{BLOB}"), "storagePath": S(""),
         "uploaderUid": S("alice"), "sizeBytes": I(5000000)}, "createdAt"), True)
 expect("player state", write("bob", "rooms/main/state/player", {"songId": S("s1"), "songTitle": S("Song"),
         "songUrl": S(f"blob:{BLOB}"), "playing": {"booleanValue": True}, "positionMs": I(1000), "updatedBy": S("bob")}, "updatedAt"), True)
-expect("read messages", req("GET", f"{BASE}/rooms/main/messages", "carol"), True)
+expect("read messages", req("GET", f"{BASE}/rooms/main/chat", "carol"), True)
 expect("read blob chunk", req("GET", f"{BASE}/blobs/{BLOB}/chunks/0", "carol"), True)
 def anon_read():
     try:
-        with urllib.request.urlopen(f"{BASE}/rooms/main/messages") as r: return r.status, ""
+        with urllib.request.urlopen(f"{BASE}/rooms/main/chat") as r: return r.status, ""
     except urllib.error.HTTPError as e: return e.code, e.read().decode()
 expect("unauthenticated read", anon_read(), False)
 
 def patch(uid, path, fields, mask):
     q = "&".join(f"updateMask.fieldPaths={m}" for m in mask)
     return req("PATCH", f"{BASE}/{path}?{q}&currentDocument.exists=true", uid, {"fields": fields})
-expect("reply message", write("alice", "rooms/main/messages/m4", dict(msg("alice", "text", "re"),
+expect("reply message", write("alice", "rooms/main/chat/m4", dict(msg("alice", "text", "re"),
         replyToId=S("m1"), replyToName=S("Alice"), replyToText=S("hi")), "timestamp"), True)
-expect("bob reacts", patch("bob", "rooms/main/messages/m1", {"reactions": {"mapValue": {"fields": {"bob": S("❤️")}}}}, ["reactions.bob"]), True)
-expect("carol reacts", patch("carol", "rooms/main/messages/m1", {"reactions": {"mapValue": {"fields": {"carol": S("😂")}}}}, ["reactions.carol"]), True)
-expect("bob removes reaction", patch("bob", "rooms/main/messages/m1", {}, ["reactions.bob"]), True)
-expect("react as someone else", patch("bob", "rooms/main/messages/m1", {"reactions": {"mapValue": {"fields": {"carol": S("👍")}}}}, ["reactions.carol"]), False)
-expect("edit text via react", patch("bob", "rooms/main/messages/m1", {"text": S("hacked")}, ["text"]), False)
-expect("author deletes own", req("DELETE", f"{BASE}/rooms/main/messages/m2", "alice"), True)
-expect("delete others'", req("DELETE", f"{BASE}/rooms/main/messages/m1", "bob"), False)
+expect("bob reacts", patch("bob", "rooms/main/chat/m1", {"reactions": {"mapValue": {"fields": {"bob": S("❤️")}}}}, ["reactions.bob"]), True)
+expect("carol reacts", patch("carol", "rooms/main/chat/m1", {"reactions": {"mapValue": {"fields": {"carol": S("😂")}}}}, ["reactions.carol"]), True)
+expect("bob removes reaction", patch("bob", "rooms/main/chat/m1", {}, ["reactions.bob"]), True)
+expect("react as someone else", patch("bob", "rooms/main/chat/m1", {"reactions": {"mapValue": {"fields": {"carol": S("👍")}}}}, ["reactions.carol"]), False)
+expect("edit text via react", patch("bob", "rooms/main/chat/m1", {"text": S("hacked")}, ["text"]), False)
+expect("author deletes own", req("DELETE", f"{BASE}/rooms/main/chat/m2", "alice"), True)
+expect("delete others'", req("DELETE", f"{BASE}/rooms/main/chat/m1", "bob"), False)
+
+def delete_all(uid, path, extra_fields=None):
+    f = {"type": S("deleted"), "text": S(""), "mediaUrl": S(""), "replyToText": S(""), "reactions": {"mapValue": {}}}
+    if extra_fields: f.update(extra_fields)
+    return patch(uid, path, f, list(f.keys()))
+expect("msg to delete", write("alice", "rooms/main/chat/d1", msg("alice", "image", media=f"blob:{BLOB}"), "timestamp"), True)
+expect("bob reacts d1", patch("bob", "rooms/main/chat/d1", {"reactions": {"mapValue": {"fields": {"bob": S("😂")}}}}, ["reactions.bob"]), True)
+expect("others can't delete for everyone", delete_all("bob", "rooms/main/chat/d1"), False)
+expect("author can't sneak new text", delete_all("alice", "rooms/main/chat/d1", {"text": S("gotcha")}), False)
+expect("author deletes for everyone", delete_all("alice", "rooms/main/chat/d1"), True)
+expect("no reactions on deleted", patch("bob", "rooms/main/chat/d1", {"reactions": {"mapValue": {"fields": {"bob": S("❤️")}}}}, ["reactions.bob"]), False)
+expect("old 'messages' collection closed", req("GET", f"{BASE}/rooms/main/messages", "carol"), False)
 
 print("\nRESULT:", "ALL PASSED" if not failures else f"FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

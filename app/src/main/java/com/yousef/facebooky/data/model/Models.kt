@@ -8,6 +8,8 @@ object MessageType {
     const val VOICE = "voice"
     const val STICKER = "sticker"
     const val MUSIC = "music"
+    /** A message its author deleted for everyone (content removed, placeholder shown). */
+    const val DELETED = "deleted"
 }
 
 data class UserProfile(
@@ -50,6 +52,7 @@ data class ChatMessage(
             MessageType.STICKER -> "Sticker"
             MessageType.VOICE -> "🎤 Voice message"
             MessageType.MUSIC -> "🎵 $text"
+            MessageType.DELETED -> "Deleted message"
             else -> text
         }
 }

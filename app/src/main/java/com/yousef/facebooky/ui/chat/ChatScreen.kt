@@ -1,6 +1,13 @@
 package com.yousef.facebooky.ui.chat
 
 import android.Manifest
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import com.yousef.facebooky.R
+import com.yousef.facebooky.ui.icons.AppIcons
+import com.yousef.facebooky.ui.theme.BarColor
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -133,16 +140,27 @@ fun ChatScreen(vm: ChatViewModel) {
             onReact = { vm.react(m, it); actionsFor = null },
             onReply = { vm.startReply(m); actionsFor = null },
             onCopy = { clipboard.setText(AnnotatedString(m.text)); actionsFor = null },
-            onDelete = { vm.deleteMessage(m); actionsFor = null },
+            onDeleteForMe = { vm.deleteForMe(m); actionsFor = null },
+            onDeleteForEveryone = { vm.deleteForEveryone(m); actionsFor = null },
             onDismiss = { actionsFor = null },
         )
     }
 
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Image(
+        painterResource(R.drawable.chat_bg), null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.fillMaxSize(),
+    )
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0x66000000), Color(0x22000000), Color(0x88000000))))
+    )
     Scaffold(
         topBar = {
             ChatHeader(
                 profile = vm.profile,
-                other = otherPerson(vm),
                 locked = vm.chatLocked,
                 onProfile = { vm.openProfileEditor() },
                 connection = vm.connection,
@@ -153,7 +171,7 @@ fun ChatScreen(vm: ChatViewModel) {
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
     ) { padding ->
         Column(
             Modifier
@@ -217,6 +235,8 @@ fun ChatScreen(vm: ChatViewModel) {
                 EmojiPanel(onEmoji = { vm.draft += it })
             }
         }
+    }
+
     }
 
     if (showAttach) {
@@ -289,6 +309,7 @@ private fun MessageList(
     }
 
     val newestFirst = messages.asReversed()
+    val byId = remember(messages) { messages.associateBy { it.id } }
     LazyColumn(
         state = listState,
         reverseLayout = true,
@@ -310,6 +331,8 @@ private fun MessageList(
                 onOpenImage = onOpenImage,
                 onPlaySong = vm::playSongFromMessage,
                 onLongPress = onLongPress,
+                replyTargetDeleted = m.replyToId.isNotBlank() &&
+                    byId[m.replyToId]?.type == MessageType.DELETED,
                 onQuoteClick = { id ->
                     val target = newestFirst.indexOfFirst { it.id == id }
                     if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
@@ -323,7 +346,6 @@ private fun MessageList(
 @Composable
 private fun ChatHeader(
     profile: UserProfile?,
-    other: UserProfile?,
     locked: Boolean,
     onProfile: () -> Unit,
     connection: ConnectionStatus,
@@ -332,78 +354,47 @@ private fun ChatHeader(
     onVoiceCall: () -> Unit,
     onVideoCall: () -> Unit,
 ) {
-    var menu by remember { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+    Surface(color = BarColor, contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .height(60.dp)
-                .padding(horizontal = 12.dp),
+                .height(62.dp)
+                .padding(start = 14.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val hasProfile = profile?.isComplete == true
             if (hasProfile) {
-                // The person I'm talking to (big) with my own photo in the corner. Tap = edit my profile.
-                Box(Modifier.size(44.dp).clickable(onClick = onProfile)) {
-                    if (other != null) {
-                        Avatar(other.photoUrl, 40.dp)
-                        Avatar(
-                            profile!!.displayPhoto, 20.dp,
-                            Modifier
-                                .align(Alignment.BottomEnd)
-                                .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape),
-                        )
-                    } else {
-                        Avatar(profile!!.displayPhoto, 40.dp, Modifier.align(Alignment.Center))
-                    }
-                }
+                Avatar(profile!!.displayPhoto, 40.dp, Modifier.clickable(onClick = onProfile))
             } else {
-                Box(
-                    Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Rounded.ChatBubble, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(19.dp))
-                }
+                Image(
+                    painterResource(R.mipmap.ic_launcher_foreground), "My Space",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(40.dp).clip(CircleShape),
+                )
             }
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (hasProfile) "Welcome, ${profile!!.name}" else "FaceBooky",
+                    if (hasProfile) "Welcome, ${profile!!.name}" else "My Space",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                ConnectionLine(connection, locked, prefix = other?.name?.let { "with $it" } ?: if (hasProfile) "FaceBooky" else null)
+                ConnectionLine(connection, locked, prefix = if (hasProfile) "My Space" else null)
             }
-            IconButton(onClick = onMusic) {
-                Icon(
-                    Icons.Rounded.MusicNote, "Music",
-                    tint = if (musicActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Box {
-                IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Rounded.Call, "Call", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Voice call") },
-                        leadingIcon = { Icon(Icons.Rounded.Call, null) },
-                        onClick = { menu = false; onVoiceCall() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Video call") },
-                        leadingIcon = { Icon(Icons.Rounded.Videocam, null) },
-                        onClick = { menu = false; onVideoCall() },
-                    )
-                }
-            }
+            HeaderButton(AppIcons.Music, "Music", onMusic, tint = if (musicActive) MaterialTheme.colorScheme.primary else null)
+            HeaderButton(AppIcons.Video, "Video call", onVideoCall)
+            HeaderButton(AppIcons.Phone, "Voice call", onVoiceCall)
         }
+    }
+}
+
+@Composable
+private fun HeaderButton(icon: ImageVector, label: String, onClick: () -> Unit, tint: Color? = null) {
+    IconButton(onClick = onClick) {
+        Icon(icon, label, Modifier.size(22.dp), tint = tint ?: MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -440,7 +431,7 @@ private fun NowPlayingStrip(title: String, muted: Boolean, onToggleMute: () -> U
             .padding(start = 14.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.MusicNote, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(18.dp))
+        Icon(AppIcons.Music, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text(
             title, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -458,17 +449,9 @@ private fun NowPlayingStrip(title: String, muted: Boolean, onToggleMute: () -> U
 }
 
 
-/** The other person in the chat: whoever (not me) wrote most recently. */
-private fun otherPerson(vm: ChatViewModel): UserProfile? {
-    val me = vm.myUid ?: return null
-    val m = vm.messages.lastOrNull { it.senderUid != me && it.senderUid.isNotBlank() } ?: return null
-    return vm.people[m.senderUid]?.takeIf { it.name.isNotBlank() }
-        ?: UserProfile(m.senderUid, m.senderName, m.senderPhoto)
-}
-
 @Composable
 private fun ReplyStrip(name: String, text: String, onCancel: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+    Surface(color = BarColor) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -487,7 +470,7 @@ private fun ReplyStrip(name: String, text: String, onCancel: () -> Unit) {
                 Text(text, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "Cancel reply") }
+            IconButton(onClick = onCancel) { Icon(AppIcons.Close, "Cancel reply", Modifier.size(20.dp)) }
         }
     }
 }
@@ -503,28 +486,40 @@ private fun MessageActionsSheet(
     onReact: (String) -> Unit,
     onReply: () -> Unit,
     onCopy: () -> Unit,
-    onDelete: () -> Unit,
+    onDeleteForMe: () -> Unit,
+    onDeleteForEveryone: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val deleted = message.type == MessageType.DELETED
+    var confirmEveryone by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                QuickReactions.forEach { emoji ->
-                    val selected = emoji == myReaction
-                    Box(
-                        Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent)
-                            .clickable { onReact(emoji) },
-                        contentAlignment = Alignment.Center,
-                    ) { Text(emoji, style = MaterialTheme.typography.headlineSmall) }
+            if (!deleted) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    QuickReactions.forEach { emoji ->
+                        val selected = emoji == myReaction
+                        Box(
+                            Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.Transparent)
+                                .clickable { onReact(emoji) },
+                            contentAlignment = Alignment.Center,
+                        ) { Text(emoji, style = MaterialTheme.typography.headlineSmall) }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                ActionRow(AppIcons.Reply, "Reply", onReply)
+                if (message.type == MessageType.TEXT) ActionRow(AppIcons.Copy, "Copy", onCopy)
+            }
+            ActionRow(AppIcons.EyeOff, "Delete for me", onDeleteForMe)
+            if (isMine && !deleted) {
+                if (confirmEveryone) {
+                    ActionRow(AppIcons.Trash, "Tap again to delete for everyone", onDeleteForEveryone, danger = true)
+                } else {
+                    ActionRow(AppIcons.Trash, "Delete for everyone", { confirmEveryone = true }, danger = true)
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            ActionRow(Icons.AutoMirrored.Rounded.Reply, "Reply", onReply)
-            if (message.type == MessageType.TEXT) ActionRow(Icons.Rounded.ContentCopy, "Copy", onCopy)
-            if (isMine) ActionRow(Icons.Rounded.Delete, "Delete", onDelete, danger = true)
         }
     }
 }

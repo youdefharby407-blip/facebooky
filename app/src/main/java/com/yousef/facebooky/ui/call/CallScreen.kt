@@ -153,7 +153,7 @@ private fun PeerInfo(state: CallUiState, modifier: Modifier) {
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Avatar(state.peerPhoto, 112.dp)
         Spacer(Modifier.height(18.dp))
-        Text(state.peerName.ifBlank { "FaceBooky" }, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text(state.peerName.ifBlank { "My Space" }, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
         Text(statusText(state), color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium)
     }

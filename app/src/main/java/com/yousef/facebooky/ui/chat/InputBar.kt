@@ -1,5 +1,7 @@
 package com.yousef.facebooky.ui.chat
 
+import com.yousef.facebooky.ui.icons.AppIcons
+import com.yousef.facebooky.ui.theme.BarColor
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -69,7 +71,7 @@ fun InputBar(
     onCancelRecording: () -> Unit,
     onSendRecording: () -> Unit,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+    Surface(color = BarColor) {
         AnimatedContent(
             targetState = recordingStartedAt,
             transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
@@ -85,15 +87,15 @@ fun InputBar(
                     verticalAlignment = Alignment.Bottom,
                 ) {
                     IconButton(onClick = onToggleEmoji) {
-                        Icon(if (emojiOpen) Icons.Rounded.Keyboard else Icons.Rounded.EmojiEmotions, "Emoji")
+                        Icon(if (emojiOpen) AppIcons.Keyboard else AppIcons.Smile, "Emoji", Modifier.size(24.dp))
                     }
-                    IconButton(onClick = onAttach) { Icon(Icons.Rounded.Add, "Attach") }
+                    IconButton(onClick = onAttach) { Icon(AppIcons.Plus, "Attach", Modifier.size(24.dp)) }
                     Box(
                         Modifier
                             .weight(1f)
                             .heightIn(min = 44.dp)
                             .clip(RoundedCornerShape(22.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f))
                             .padding(horizontal = 14.dp, vertical = 11.dp),
                         contentAlignment = Alignment.CenterStart,
                     ) {
@@ -113,7 +115,7 @@ fun InputBar(
                     val hasText = text.isNotBlank()
                     FilledIconButton(onClick = if (hasText) onSend else onMic, modifier = Modifier.size(44.dp)) {
                         AnimatedContent(targetState = hasText, label = "sendMic") { send ->
-                            if (send) Icon(Icons.AutoMirrored.Rounded.Send, "Send") else Icon(Icons.Rounded.Mic, "Voice message")
+                            if (send) Icon(AppIcons.Send, "Send", Modifier.size(20.dp)) else Icon(AppIcons.Mic, "Voice message", Modifier.size(22.dp))
                         }
                     }
                     Spacer(Modifier.width(4.dp))
@@ -142,7 +144,7 @@ private fun RecordingRow(startedAt: Long, onCancel: () -> Unit, onSend: () -> Un
             .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onCancel) { Icon(Icons.Rounded.Delete, "Cancel", tint = MaterialTheme.colorScheme.error) }
+        IconButton(onClick = onCancel) { Icon(AppIcons.Trash, "Cancel", tint = MaterialTheme.colorScheme.error) }
         Box(
             Modifier
                 .size(10.dp)
@@ -155,7 +157,7 @@ private fun RecordingRow(startedAt: Long, onCancel: () -> Unit, onSend: () -> Un
         Spacer(Modifier.weight(1f))
         Text("Recording…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.width(12.dp))
-        FilledIconButton(onClick = onSend, modifier = Modifier.size(44.dp)) { Icon(Icons.AutoMirrored.Rounded.Send, "Send voice") }
+        FilledIconButton(onClick = onSend, modifier = Modifier.size(44.dp)) { Icon(AppIcons.Send, "Send voice", Modifier.size(20.dp)) }
         Spacer(Modifier.width(4.dp))
     }
 }
@@ -170,7 +172,7 @@ private val EMOJIS = listOf(
 
 @Composable
 fun EmojiPanel(onEmoji: (String) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
+    Surface(color = BarColor) {
         LazyVerticalGrid(
             columns = GridCells.Adaptive(46.dp),
             modifier = Modifier
