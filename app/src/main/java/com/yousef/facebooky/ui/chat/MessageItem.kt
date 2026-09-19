@@ -90,8 +90,8 @@ fun MessageItem(
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val longPress = { onLongPress(message) }
     // Swipe a message sideways (like WhatsApp) to reply to it.
-    var dragX by remember(message.id) { mutableFloatStateOf(0f) }
-    val dragXAnim by animateFloatAsState(dragX, label = "swipe")
+    val dragX = remember(message.id) { mutableFloatStateOf(0f) }
+    val dragXAnim by animateFloatAsState(dragX.floatValue, label = "swipe")
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -100,12 +100,12 @@ fun MessageItem(
             .pointerInput(message.id) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
-                        if (kotlin.math.abs(dragX) > 60f && message.type != MessageType.DELETED) onReply(message)
-                        dragX = 0f
+                        if (kotlin.math.abs(dragX.floatValue) > 60f && message.type != MessageType.DELETED) onReply(message)
+                        dragX.floatValue = 0f
                     },
-                    onDragCancel = { dragX = 0f },
+                    onDragCancel = { dragX.floatValue = 0f },
                 ) { _, delta ->
-                    dragX = (dragX + delta).coerceIn(-140f, 140f)
+                    dragX.floatValue = (dragX.floatValue + delta).coerceIn(-140f, 140f)
                 }
             },
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
