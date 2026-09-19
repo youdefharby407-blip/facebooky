@@ -1,6 +1,8 @@
 package com.yousef.facebooky.ui.chat
 
 import android.Manifest
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
@@ -108,6 +110,7 @@ fun ChatScreen(vm: ChatViewModel) {
     var showEmoji by remember { mutableStateOf(false) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
     var actionsFor by remember { mutableStateOf<ChatMessage?>(null) }
+    var confirmClear by remember { mutableStateOf<ClearMode?>(null) }
     val clipboard = LocalClipboardManager.current
 
     val voice by vm.voicePlayer.state.collectAsStateWithLifecycle()
@@ -130,6 +133,27 @@ fun ChatScreen(vm: ChatViewModel) {
         val perms = if (video) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
         else arrayOf(Manifest.permission.RECORD_AUDIO)
         permissions.request(perms) { vm.startCall(video) }
+    }
+
+    confirmClear?.let { mode ->
+        AlertDialog(
+            onDismissRequest = { confirmClear = null },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(if (mode == ClearMode.ME) "Clear chat for you?" else "Clear chat for everyone?") },
+            text = {
+                Text(
+                    if (mode == ClearMode.ME) "All current messages disappear on this phone only. Others still see them."
+                    else "All current messages disappear for everyone in My Space. This can't be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (mode == ClearMode.ME) vm.clearChatForMe() else vm.clearChatForEveryone()
+                    confirmClear = null
+                }) { Text("Clear", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = null }) { Text("Cancel") } },
+        )
     }
 
     actionsFor?.let { m ->
@@ -168,10 +192,13 @@ fun ChatScreen(vm: ChatViewModel) {
                 onMusic = { showMusic = true },
                 onVoiceCall = { startCall(false) },
                 onVideoCall = { startCall(true) },
+                onClearForMe = { confirmClear = ClearMode.ME },
+                onClearForEveryone = { confirmClear = ClearMode.EVERYONE },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
     ) { padding ->
         Column(
             Modifier
@@ -292,14 +319,10 @@ private fun MessageList(
     }
 
     if (messages.isEmpty()) {
+        // Empty chat = just the wallpaper. Only a real problem is explained.
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text(
-                when {
-                    vm.chatLocked -> "Chat is locked.\nPublish the Firestore rules in Firebase Console."
-                    vm.connection == ConnectionStatus.OFFLINE -> "You're offline.\nMessages will appear when you reconnect."
-                    vm.connection == ConnectionStatus.CONNECTED -> "No messages yet. Say hi 👋"
-                    else -> "Loading chat…"
-                },
+            if (vm.chatLocked) Text(
+                "Chat is locked.\nPublish the Firestore rules in Firebase Console.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(24.dp),
@@ -353,14 +376,17 @@ private fun ChatHeader(
     onMusic: () -> Unit,
     onVoiceCall: () -> Unit,
     onVideoCall: () -> Unit,
+    onClearForMe: () -> Unit,
+    onClearForEveryone: () -> Unit,
 ) {
+    var menu by remember { mutableStateOf(false) }
     Surface(color = BarColor, contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .height(62.dp)
-                .padding(start = 14.dp, end = 6.dp),
+                .padding(start = 14.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val hasProfile = profile?.isComplete == true
@@ -387,13 +413,37 @@ private fun ChatHeader(
             HeaderButton(AppIcons.Music, "Music", onMusic, tint = if (musicActive) MaterialTheme.colorScheme.primary else null)
             HeaderButton(AppIcons.Video, "Video call", onVideoCall)
             HeaderButton(AppIcons.Phone, "Voice call", onVoiceCall)
+            Box {
+                HeaderButton(AppIcons.More, "More", { menu = true })
+                DropdownMenu(
+                    expanded = menu,
+                    onDismissRequest = { menu = false },
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (hasProfile) "Edit profile" else "Set up profile") },
+                        leadingIcon = { Icon(AppIcons.User, null, Modifier.size(20.dp)) },
+                        onClick = { menu = false; onProfile() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear chat for me") },
+                        leadingIcon = { Icon(AppIcons.Eraser, null, Modifier.size(20.dp)) },
+                        onClick = { menu = false; onClearForMe() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear chat for everyone", color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { Icon(AppIcons.Trash, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error) },
+                        onClick = { menu = false; onClearForEveryone() },
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun HeaderButton(icon: ImageVector, label: String, onClick: () -> Unit, tint: Color? = null) {
-    IconButton(onClick = onClick) {
+    IconButton(onClick = onClick, modifier = Modifier.size(42.dp)) {
         Icon(icon, label, Modifier.size(22.dp), tint = tint ?: MaterialTheme.colorScheme.onSurface)
     }
 }
@@ -451,7 +501,7 @@ private fun NowPlayingStrip(title: String, muted: Boolean, onToggleMute: () -> U
 
 @Composable
 private fun ReplyStrip(name: String, text: String, onCancel: () -> Unit) {
-    Surface(color = BarColor) {
+    Surface(color = BarColor, contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -540,3 +590,5 @@ private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit, dan
         Text(label, style = MaterialTheme.typography.bodyLarge, color = color)
     }
 }
+
+private enum class ClearMode { ME, EVERYONE }

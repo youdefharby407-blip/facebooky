@@ -71,7 +71,7 @@ fun InputBar(
     onCancelRecording: () -> Unit,
     onSendRecording: () -> Unit,
 ) {
-    Surface(color = BarColor) {
+    Surface(color = BarColor, contentColor = MaterialTheme.colorScheme.onSurface) {
         AnimatedContent(
             targetState = recordingStartedAt,
             transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
@@ -172,7 +172,7 @@ private val EMOJIS = listOf(
 
 @Composable
 fun EmojiPanel(onEmoji: (String) -> Unit) {
-    Surface(color = BarColor) {
+    Surface(color = BarColor, contentColor = MaterialTheme.colorScheme.onSurface) {
         LazyVerticalGrid(
             columns = GridCells.Adaptive(46.dp),
             modifier = Modifier

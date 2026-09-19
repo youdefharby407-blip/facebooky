@@ -60,6 +60,11 @@ object AppIcons {
         )
     }
     val Close by lazy { icon("close", "M18 6 6 18", "M6 6l12 12") }
+    val More by lazy { icon("more", circle(12f, 5f, 1f), circle(12f, 12f, 1f), circle(12f, 19f, 1f)) }
+    val User by lazy { icon("user", "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2", circle(12f, 7f, 4f)) }
+    val Eraser by lazy {
+        icon("eraser", "M7 21 3 17a2 2 0 0 1 0-2.8L13.2 4a2 2 0 0 1 2.8 0L21 9a2 2 0 0 1 0 2.8L12 21", "M22 21H7", "M5 11l9 9")
+    }
     val Ban by lazy { icon("ban", circle(12f, 12f, 10f), "M4.9 4.9l14.2 14.2") }
 
     private fun circle(cx: Float, cy: Float, r: Float) = "M${cx - r} ${cy}a$r $r 0 1 0 ${2 * r} 0a$r $r 0 1 0 ${-2 * r} 0"

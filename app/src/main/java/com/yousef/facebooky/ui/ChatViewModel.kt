@@ -94,6 +94,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val hiddenPrefs = app.getSharedPreferences("hidden_messages", android.content.Context.MODE_PRIVATE)
     private var hiddenIds: Set<String> = hiddenPrefs.getStringSet(HIDDEN_KEY, emptySet()).orEmpty().toSet()
     private var allMessages: List<ChatMessage> = emptyList()
+    private var syncJob: Job? = null
+    private var globalClearedAt = 0L
+    private var localClearedAt = hiddenPrefs.getLong(CLEARED_KEY, 0L)
     private var networkUp = true
     private var fromCache = true
     private var pendingAction: (() -> Unit)? = null
@@ -148,7 +151,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 .collect { snap ->
                     chatLocked = false
                     allMessages = snap.messages
-                    messages = snap.messages.filterNot { it.id in hiddenIds }
+                    refreshVisible()
                     fromCache = snap.fromCache
                     updateConnection()
                 }
@@ -157,6 +160,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             userRepo.observeAll()
                 .retryWhen { e, _ -> Log.w(TAG, "users listener", e); delay(5000); true }
                 .collect { people = it }
+        }
+        viewModelScope.launch {
+            chatRepo.observeClearedAt()
+                .retryWhen { e, _ -> Log.w(TAG, "chat state listener", e); delay(5000); true }
+                .collect {
+                    globalClearedAt = it
+                    refreshVisible()
+                }
         }
         music.start()
         calls.startListening(uid)
@@ -247,7 +258,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private var syncJob: Job? = null
 
     /** Background upload of the local profile (photo -> Storage, name/photo -> Firestore). */
     private fun syncProfile() {
@@ -348,7 +358,32 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (replyingTo?.id == m.id) replyingTo = null
         hiddenIds = hiddenIds + m.id
         hiddenPrefs.edit().putStringSet(HIDDEN_KEY, hiddenIds).apply()
-        messages = allMessages.filterNot { it.id in hiddenIds }
+        refreshVisible()
+    }
+
+    // ---------- clear chat ----------
+
+    private fun refreshVisible() {
+        val cutoff = maxOf(globalClearedAt, localClearedAt)
+        messages = allMessages.filter { m ->
+            m.id !in hiddenIds && (cutoff == 0L || (m.timestamp?.time ?: Long.MAX_VALUE) > cutoff)
+        }
+    }
+
+    /** Clears the chat on this phone only (new messages still show). */
+    fun clearChatForMe() {
+        // Use the newest message's (server) time, so a wrong phone clock can't hide new messages.
+        val newest = allMessages.mapNotNull { it.timestamp?.time }.maxOrNull() ?: return
+        localClearedAt = maxOf(localClearedAt, newest)
+        hiddenPrefs.edit().putLong(CLEARED_KEY, localClearedAt).apply()
+        replyingTo = null
+        refreshVisible()
+    }
+
+    /** Clears the chat for everyone (requires a profile). */
+    fun clearChatForEveryone() = withProfile { p ->
+        replyingTo = null
+        chatRepo.clearForEveryone(p.uid, ::onSendError)
     }
 
     fun sendImage(uri: Uri) = withProfile { p ->
@@ -514,6 +549,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val TAG = "ChatViewModel"
         const val HIDDEN_KEY = "ids"
+        const val CLEARED_KEY = "cleared_at"
         const val MAX_MUSIC_BYTES = 15L * 1024 * 1024
     }
 }

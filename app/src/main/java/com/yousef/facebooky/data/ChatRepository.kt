@@ -18,6 +18,31 @@ data class MessagesSnapshot(val messages: List<ChatMessage>, val fromCache: Bool
 
 class ChatRepository(db: FirebaseFirestore) {
 
+    /** rooms/main/state/chat -> clearedAt: messages older than this are hidden for everyone. */
+    private val chatState = db.collection(FirebasePaths.ROOMS)
+        .document(FirebasePaths.MAIN_ROOM)
+        .collection(FirebasePaths.STATE)
+        .document("chat")
+
+    fun observeClearedAt(): Flow<Long> = callbackFlow {
+        val reg = chatState.addSnapshotListener { snap, e ->
+            if (e != null) {
+                close(e)
+                return@addSnapshotListener
+            }
+            trySend(
+                snap?.getTimestamp("clearedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?.toDate()?.time ?: 0L
+            )
+        }
+        awaitClose { reg.remove() }
+    }
+
+    fun clearForEveryone(uid: String, onError: (Exception) -> Unit) {
+        chatState.set(mapOf("clearedAt" to FieldValue.serverTimestamp(), "clearedBy" to uid))
+            .addOnFailureListener(onError)
+    }
+
     private val messages = db.collection(FirebasePaths.ROOMS)
         .document(FirebasePaths.MAIN_ROOM)
         .collection(FirebasePaths.MESSAGES)

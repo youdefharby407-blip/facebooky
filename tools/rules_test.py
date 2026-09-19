@@ -94,5 +94,10 @@ expect("author deletes for everyone", delete_all("alice", "rooms/main/chat/d1"),
 expect("no reactions on deleted", patch("bob", "rooms/main/chat/d1", {"reactions": {"mapValue": {"fields": {"bob": S("❤️")}}}}, ["reactions.bob"]), False)
 expect("old 'messages' collection closed", req("GET", f"{BASE}/rooms/main/messages", "carol"), False)
 
+expect("clear chat for everyone", write("bob", "rooms/main/state/chat", {"clearedBy": S("bob")}, "clearedAt"), True)
+expect("clear chat as someone else", write("bob", "rooms/main/state/chat", {"clearedBy": S("alice")}, "clearedAt"), False)
+expect("clear chat with fake time", write("bob", "rooms/main/state/chat", {"clearedBy": S("bob"),
+        "clearedAt": {"timestampValue": "2020-01-01T00:00:00Z"}}), False)
+
 print("\nRESULT:", "ALL PASSED" if not failures else f"FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

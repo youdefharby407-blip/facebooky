@@ -108,6 +108,12 @@ service cloud.firestore {
       // Mute is local-only and never written here.
       match /state/{docId} {
         allow read: if signedIn();
+        // "Clear chat for everyone": hides every message older than clearedAt.
+        allow create, update: if signedIn()
+          && roomId == 'main' && docId == 'chat'
+          && request.resource.data.keys().hasOnly(['clearedAt', 'clearedBy'])
+          && request.resource.data.clearedAt == request.time
+          && request.resource.data.clearedBy == request.auth.uid;
         allow create, update: if signedIn()
           && roomId == 'main' && docId == 'player'
           && request.resource.data.keys().hasOnly(['songId', 'songTitle', 'songUrl', 'playing', 'positionMs', 'updatedAt', 'updatedBy'])
