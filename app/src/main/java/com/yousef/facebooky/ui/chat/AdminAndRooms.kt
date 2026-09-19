@@ -387,3 +387,120 @@ private fun AdminDeviceRow(u: com.yousef.facebooky.data.model.Presence, myRegion
         }
     }
 }
+
+/** Up to 3 member photos stacked into one 40dp circle (for group headers). */
+@Composable
+fun GroupAvatar(photos: List<String>, modifier: Modifier = Modifier) {
+    Box(modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+        val shown = photos.take(3)
+        when (shown.size) {
+            0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(AppIcons.User, null, Modifier.size(20.dp)) }
+            1 -> AsyncImage(shown[0], null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else -> Row(Modifier.fillMaxSize()) {
+                shown.forEach { p ->
+                    AsyncImage(p, null, Modifier.weight(1f).fillMaxSize(), contentScale = ContentScale.Crop)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PersonCardDialog(profile: com.yousef.facebooky.data.model.UserProfile, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Box(Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    if (profile.photoUrl.isNotBlank()) {
+                        AsyncImage(profile.photoUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    } else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(AppIcons.User, null, Modifier.size(40.dp))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(profile.name.ifBlank { "Unknown" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    if (profile.isAdmin) AdminTag()
+                }
+                if (profile.shortId.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("ID ${profile.shortId}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MembersSheet(vm: ChatViewModel, onAdd: () -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Members", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(10.dp))
+            vm.currentMembers().forEach { m ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        if (m.photoUrl.isNotBlank()) AsyncImage(m.photoUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(AppIcons.User, null, Modifier.size(20.dp)) }
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        m.name.ifBlank { "…" } + if (m.uid == vm.myUid) " (you)" else "",
+                        Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge,
+                    )
+                    if (m.isAdmin) AdminTag()
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+                Icon(AppIcons.AddUser, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add new members")
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { vm.leaveCurrentRoom(); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Leave chat", color = MaterialTheme.colorScheme.error)
+            }
+            Text(
+                "You can only remove yourself. No one can remove anybody else.",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+fun AddMemberDialog(onAdd: (String, (String?) -> Unit) -> Unit, onClose: () -> Unit) {
+    var id by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onClose() },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Add member") },
+        text = {
+            OutlinedTextField(
+                value = id,
+                onValueChange = { id = it.uppercase(); error = null },
+                label = { Text("Friend's ID") },
+                placeholder = { Text("ABC-123") },
+                singleLine = true,
+                isError = error != null,
+                supportingText = error?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(enabled = id.isNotBlank() && !busy, onClick = {
+                busy = true
+                onAdd(id) { result -> busy = false; if (result == null) onClose() else error = result }
+            }) {
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Add")
+            }
+        },
+        dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("Cancel") } },
+    )
+}

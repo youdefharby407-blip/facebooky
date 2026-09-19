@@ -9,6 +9,13 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -77,18 +84,35 @@ fun MessageItem(
     modifier: Modifier = Modifier,
     replyTargetDeleted: Boolean = false,
     senderIsAdmin: Boolean = false,
+    onReply: (ChatMessage) -> Unit = {},
+    onAvatarClick: (String) -> Unit = {},
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val longPress = { onLongPress(message) }
+    // Swipe a message sideways (like WhatsApp) to reply to it.
+    var dragX by remember(message.id) { mutableFloatStateOf(0f) }
+    val dragXAnim by animateFloatAsState(dragX, label = "swipe")
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = if (showSender) 10.dp else 2.dp),
+            .padding(top = if (showSender) 10.dp else 2.dp)
+            .offset { IntOffset(dragXAnim.roundToInt(), 0) }
+            .pointerInput(message.id) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (kotlin.math.abs(dragX) > 60f && message.type != MessageType.DELETED) onReply(message)
+                        dragX = 0f
+                    },
+                    onDragCancel = { dragX = 0f },
+                ) { _, delta ->
+                    dragX = (dragX + delta).coerceIn(-140f, 140f)
+                }
+            },
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Top,
     ) {
         if (!isMine) {
-            if (showSender) Avatar(senderPhoto, 30.dp) else Spacer(Modifier.width(30.dp))
+            if (showSender) Avatar(senderPhoto, 30.dp, Modifier.clickable { onAvatarClick(message.senderUid) }) else Spacer(Modifier.width(30.dp))
             Spacer(Modifier.width(8.dp))
         }
         Column(

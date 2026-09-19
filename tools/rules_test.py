@@ -110,5 +110,24 @@ expect("clear reusing someone's proof", write("carol", "rooms/main/state/chat", 
 expect("reuse own old proof later", write("bob", "rooms/main/state/chat", {"clearedBy": S("bob"), "proof": S("proof1")}, "clearedAt"), False)
 expect("password docs unreadable", req("GET", f"{BASE}/clearAuth/proof1", "bob"), False)
 
+# ----- rooms / groups -----
+def room_write(uid, roomId, fields, transforms=None):
+    root = f"projects/{P}/databases/(default)/documents"
+    w = {"update": {"name": f"{root}/rooms/{roomId}", "fields": fields}}
+    if transforms: w["updateTransforms"] = transforms
+    return req("POST", f"{BASE}:commit", uid, {"writes": [w]})
+def arr(*vals): return {"arrayValue": {"values": [S(v) for v in vals]}}
+RID = "p_alice_bob"
+expect("create private room", room_write("alice", RID, {"members": arr("alice", "bob")},
+        [{"fieldPath": "createdAt", "setToServerValue": "REQUEST_TIME"}, {"fieldPath": "lastActivity", "setToServerValue": "REQUEST_TIME"}]), True)
+expect("member reads room", req("GET", f"{BASE}/rooms/{RID}", "bob"), True)
+expect("stranger can't read room", req("GET", f"{BASE}/rooms/{RID}", "carol"), False)
+expect("member adds a member", room_write("alice", RID, {"members": arr("alice", "bob", "carol")}), True)
+expect("member sets background", room_write("bob", "p_alice_bob", {"members": arr("alice", "bob", "carol"), "background": S("blob:abcdefghij1234567890")}), True)
+expect("stranger can't drop a member", room_write("dave", "p_alice_bob", {"members": arr("alice", "carol")}), False)
+expect("carol leaves herself", room_write("carol", "p_alice_bob", {"members": arr("alice", "bob")}), True)
+expect("send in my private room", write("alice", f"rooms/p_alice_bob/chat/pm1", msg("alice", "text", "hey"), "timestamp"), True)
+expect("stranger can't send in private room", write("dave", f"rooms/p_alice_bob/chat/pm2", msg("dave", "text", "x"), "timestamp"), False)
+
 print("\nRESULT:", "ALL PASSED" if not failures else f"FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

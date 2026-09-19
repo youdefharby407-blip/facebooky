@@ -65,16 +65,21 @@ data class RoomInfo(
     val id: String,
     val members: List<String>,
     val theme: String = "wallpaper",
+    /** A "blob:<id>" background image the members set for this room ("" = use theme). */
+    val background: String = "",
     val lastActivityMs: Long = 0L,
 ) {
     val isMain: Boolean get() = id == "main"
+    val isGroup: Boolean get() = members.size > 2
     fun otherUid(myUid: String): String? = members.firstOrNull { it != myUid }
+    fun otherUids(myUid: String): List<String> = members.filter { it != myUid }
 
     companion object {
         fun from(id: String, data: Map<String, Any?>): RoomInfo = RoomInfo(
             id = id,
             members = (data["members"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
             theme = (data["theme"] as? String) ?: "wallpaper",
+            background = (data["background"] as? String) ?: "",
             lastActivityMs = (data["lastActivity"] as? com.google.firebase.Timestamp)?.toDate()?.time ?: 0L,
         )
     }

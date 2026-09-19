@@ -77,6 +77,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** The person on the other side of the current room (null in the shared lobby). */
     var peer by mutableStateOf<UserProfile?>(null)
         private set
+    /** Full info for the open room (members, background) — null in the lobby. */
+    var currentRoom by mutableStateOf<RoomInfo?>(null)
+        private set
+    /** "blob:<id>" background for the current room ("" = use the theme). */
+    var roomBackground by mutableStateOf("")
+        private set
+    /** Profile whose info card is being shown (tap a peer's avatar). */
+    var infoCard by mutableStateOf<UserProfile?>(null)
+        private set
     /** My rooms, for the chat list. */
     var myRooms by mutableStateOf<List<RoomInfo>>(emptyList())
         private set
@@ -211,16 +220,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Switches every room-scoped listener + music engine to [newRoomId]. */
-    private fun openRoomInternal(newRoomId: String, other: UserProfile?) {
+    private fun openRoomInternal(newRoomId: String, other: UserProfile?, info: RoomInfo? = null) {
         roomJobs.forEach { it.cancel() }
         roomJobs = mutableListOf()
         music.stop()
 
         roomId = newRoomId
         peer = other
+        currentRoom = info
+        roomBackground = info?.background.orEmpty()
         roomTheme = if (newRoomId == FirebasePaths.MAIN_ROOM)
             roomThemePrefs.getString("main", "wallpaper") ?: "wallpaper"
-        else myRooms.firstOrNull { it.id == newRoomId }?.theme ?: "wallpaper"
+        else (info?.theme ?: myRooms.firstOrNull { it.id == newRoomId }?.theme ?: "wallpaper")
         chatLocked = false
         allMessages = emptyList()
         messages = emptyList()
@@ -256,10 +267,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     refreshVisible()
                 }
         }
-        roomJobs += viewModelScope.launch {
+        if (newRoomId != FirebasePaths.MAIN_ROOM) roomJobs += viewModelScope.launch {
             directory.observeMyRooms(authRepo.currentUid ?: return@launch)
                 .retryWhen { _, _ -> delay(5000); true }
-                .collect { rooms -> rooms.firstOrNull { it.id == newRoomId }?.let { roomTheme = it.theme } }
+                .collect { rooms ->
+                    rooms.firstOrNull { it.id == newRoomId }?.let {
+                        currentRoom = it
+                        roomTheme = it.theme
+                        roomBackground = it.background
+                        // If everyone else left, still keep the room usable.
+                    }
+                }
         }
         music.start()
     }
@@ -274,9 +292,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Opens an existing room from my list. */
     fun openRoom(info: RoomInfo) {
         val uid = myUid ?: return
-        val otherUid = info.otherUid(uid)
-        val other = otherUid?.let { people[it]?.copy(uid = it) }
-        openRoomInternal(info.id, other)
+        val other = if (info.isGroup) null else info.otherUid(uid)?.let { people[it]?.copy(uid = it) }
+        openRoomInternal(info.id, other, info)
     }
 
     /** Starts (or reopens) a private chat with a person by their short ID. */
@@ -297,7 +314,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             try {
                 val newRoom = directory.openRoom(me, other)
-                openRoomInternal(newRoom, other)
+                openRoomInternal(newRoom, other, RoomInfo(newRoom, listOf(me.uid, other.uid).sorted()))
                 onDone(null)
             } catch (e: Exception) {
                 onDone(if (e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED)
@@ -308,8 +325,86 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun changeRoomTheme(themeId: String) {
         roomTheme = themeId
-        if (roomId != FirebasePaths.MAIN_ROOM) directory.setRoomTheme(roomId, themeId, ::onSendError)
-        else roomThemePrefs.edit().putString("main", themeId).apply()
+        // Choosing a colour theme clears any custom background image.
+        if (roomId != FirebasePaths.MAIN_ROOM) {
+            directory.setRoomTheme(roomId, themeId, ::onSendError)
+            if (roomBackground.isNotBlank()) {
+                roomBackground = ""
+                directory.setRoomBackground(roomId, "", ::onSendError)
+            }
+        } else roomThemePrefs.edit().putString("main", themeId).apply()
+    }
+
+    /** Sets a custom background image (from the gallery) for the current private room. */
+    fun setRoomBackground(uri: Uri) {
+        val uid = myUid ?: return
+        if (roomId == FirebasePaths.MAIN_ROOM) {
+            _events.tryEmit("Backgrounds work in private chats")
+            return
+        }
+        viewModelScope.launch {
+            uploadsInProgress++
+            try {
+                val bytes = withContext(Dispatchers.IO) { ImageUtils.chatImage(getApplication(), uri) }
+                val ref = blobs.upload(uid, "images", "image/jpeg", bytes)
+                roomBackground = ref
+                directory.setRoomBackground(roomId, ref, ::onSendError)
+            } catch (e: Exception) {
+                Log.w(TAG, "background", e)
+                _events.tryEmit("Couldn't set that background")
+            } finally {
+                uploadsInProgress--
+            }
+        }
+    }
+
+    // ---------- members / groups ----------
+
+    fun showPersonCard(uid: String) {
+        infoCard = people[uid]?.copy(uid = uid) ?: peer?.takeIf { it.uid == uid }
+    }
+
+    fun dismissPersonCard() { infoCard = null }
+
+    /** Members of the current room as profiles (for the group members list). */
+    fun currentMembers(): List<UserProfile> {
+        val room = currentRoom ?: return emptyList()
+        return room.members.map { uid -> people[uid]?.copy(uid = uid) ?: UserProfile(uid, "…", "") }
+    }
+
+    /** Adds a person by ID to the current room (creates a group). */
+    fun addMemberById(shortId: String, onDone: (String?) -> Unit) {
+        val room = currentRoom ?: return onDone("Open a private chat first")
+        val id = shortId.trim().uppercase()
+        viewModelScope.launch {
+            val other = try {
+                directory.lookup(id)
+            } catch (e: Exception) {
+                onDone("Couldn't reach the server"); return@launch
+            }
+            if (other == null) {
+                onDone("No one has the ID $id"); return@launch
+            }
+            if (other.uid in room.members) {
+                onDone("Already in this chat"); return@launch
+            }
+            try {
+                directory.addMember(room.id, other.uid)
+                onDone(null)
+            } catch (e: Exception) {
+                onDone("Couldn't add them")
+            }
+        }
+    }
+
+    /** Leaves the current group; I can only remove myself. */
+    fun leaveCurrentRoom() {
+        val uid = myUid ?: return
+        val room = currentRoom ?: return
+        viewModelScope.launch {
+            runCatching { directory.leaveRoom(room.id, uid) }
+            openLobby()
+        }
     }
 
     // ---------- admin ----------

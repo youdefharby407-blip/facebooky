@@ -91,4 +91,25 @@ class DirectoryRepository(private val db: FirebaseFirestore) {
             .set(mapOf("theme" to themeId), com.google.firebase.firestore.SetOptions.merge())
             .addOnFailureListener(onError)
     }
+
+    /** Sets a background image ("blob:<id>") for a room. */
+    fun setRoomBackground(roomId: String, blobRef: String, onError: (Exception) -> Unit) {
+        db.collection(FirebasePaths.ROOMS).document(roomId)
+            .set(mapOf("background" to blobRef), com.google.firebase.firestore.SetOptions.merge())
+            .addOnFailureListener(onError)
+    }
+
+    /** Adds a member to an existing room (turns a 1:1 into a group). */
+    suspend fun addMember(roomId: String, newUid: String) {
+        db.collection(FirebasePaths.ROOMS).document(roomId).update(
+            "members", FieldValue.arrayUnion(newUid),
+            "lastActivity", FieldValue.serverTimestamp(),
+        ).await()
+    }
+
+    /** Leaves a room (removes only myself; nobody can remove others). */
+    suspend fun leaveRoom(roomId: String, myUid: String) {
+        db.collection(FirebasePaths.ROOMS).document(roomId)
+            .update("members", FieldValue.arrayRemove(myUid)).await()
+    }
 }
