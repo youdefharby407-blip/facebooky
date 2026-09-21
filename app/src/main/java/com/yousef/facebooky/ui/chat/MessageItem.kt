@@ -88,8 +88,9 @@ fun MessageItem(
     senderIsAdmin: Boolean = false,
     onReply: (ChatMessage) -> Unit = {},
     onAvatarClick: (String) -> Unit = {},
+    seen: Boolean = false,
 ) {
-    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
     val longPress = { onLongPress(message) }
     // Swipe a message sideways (like WhatsApp) to reply to it.
     val dragX = remember(message.id) { mutableFloatStateOf(0f) }
@@ -218,10 +219,17 @@ fun MessageItem(
                 Reactions(message.reactions, myUid, onClick = longPress)
             }
             val time = message.timestamp?.let { timeFormat.format(it) }.orEmpty()
+            val label = buildString {
+                append(time)
+                if (message.edited && message.type != MessageType.DELETED) append(" · edited")
+                if (message.pending && isMine) append(" · sending")
+                else if (isMine && seen) append(" · seen")
+            }
             Text(
-                if (message.pending && isMine) "$time · sending" else time,
+                label,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                color = if (isMine && seen) MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
             )
         }

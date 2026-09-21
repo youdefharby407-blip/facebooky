@@ -28,6 +28,7 @@ class ChatRepository(private val db: FirebaseFirestore, val roomId: String) {
     private val room = db.collection(FirebasePaths.ROOMS).document(roomId)
     private val messages: CollectionReference = room.collection(FirebasePaths.MESSAGES)
     private val chatState = room.collection(FirebasePaths.STATE).document(FirebasePaths.CHAT_STATE_DOC)
+    private val presence = room.collection("presence")
 
     fun newId(): String = messages.document().id
 
@@ -127,6 +128,7 @@ class ChatRepository(private val db: FirebaseFirestore, val roomId: String) {
         reactions = (get("reactions") as? Map<*, *>).orEmpty()
             .mapNotNull { (k, v) -> if (k is String && v is String && v.isNotBlank()) k to v else null }
             .toMap(),
+        edited = getBoolean("edited") ?: false,
     )
 
     /** Sets (or with null, removes) my reaction. Only my own entry is ever written. */
@@ -147,5 +149,47 @@ class ChatRepository(private val db: FirebaseFirestore, val roomId: String) {
                 "reactions" to emptyMap<String, String>(),
             )
         ).addOnFailureListener(onError)
+    }
+
+    /** Edits my own text message (adds edited=true). */
+    fun editText(messageId: String, newText: String, onError: (Exception) -> Unit) {
+        messages.document(messageId).update(mapOf("text" to newText.take(4000), "edited" to true))
+            .addOnFailureListener(onError)
+    }
+
+    // ---------- per-room presence: typing + last read (seen) ----------
+
+    /** Marks that I'm typing (or not) and updates my last-read time. Best-effort. */
+    fun setTyping(uid: String, typing: Boolean) {
+        presence.document(uid).set(
+            mapOf("typing" to typing, "at" to FieldValue.serverTimestamp()),
+            SetOptions.merge(),
+        )
+    }
+
+    /** Marks the whole chat as read up to now (called when I'm looking at it). */
+    fun markRead(uid: String) {
+        presence.document(uid).set(
+            mapOf("lastReadMs" to FieldValue.serverTimestamp(), "at" to FieldValue.serverTimestamp()),
+            SetOptions.merge(),
+        )
+    }
+
+    data class RoomPresence(val typing: Set<String>, val lastReadMs: Map<String, Long>)
+
+    /** Live presence of everyone in the room (who's typing, who read up to when). */
+    fun observePresence(): Flow<RoomPresence> = callbackFlow {
+        val reg = presence.addSnapshotListener { snap, e ->
+            if (e != null) { close(e); return@addSnapshotListener }
+            val docs = snap?.documents.orEmpty()
+            val now = System.currentTimeMillis()
+            val typing = docs.filter {
+                (it.getBoolean("typing") ?: false) &&
+                    ((it.getTimestamp("at")?.toDate()?.time ?: 0L) > now - 8000) // typing expires after 8s
+            }.map { it.id }.toSet()
+            val read = docs.associate { it.id to (it.getTimestamp("lastReadMs")?.toDate()?.time ?: 0L) }
+            trySend(RoomPresence(typing, read))
+        }
+        awaitClose { reg.remove() }
     }
 }

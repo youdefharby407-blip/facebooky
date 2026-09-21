@@ -181,6 +181,7 @@ fun ChatScreen(vm: ChatViewModel) {
             isMine = m.senderUid == vm.myUid,
             onReact = { vm.react(m, it); actionsFor = null },
             onReply = { vm.startReply(m); actionsFor = null },
+            onEdit = { vm.startEdit(m); actionsFor = null },
             onCopy = { clipboard.setText(AnnotatedString(m.text)); actionsFor = null },
             onDeleteForMe = { vm.deleteForMe(m); actionsFor = null },
             onDeleteForEveryone = { vm.deleteForEveryone(m); actionsFor = null },
@@ -276,6 +277,23 @@ fun ChatScreen(vm: ChatViewModel) {
                 modifier = Modifier.weight(1f),
             )
 
+            val editingMsg = vm.editing
+            AnimatedVisibility(editingMsg != null, enter = expandVertically(), exit = shrinkVertically()) {
+                Surface(color = BarColor) {
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(3.dp).height(34.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("تعديل الرسالة", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text(editingMsg?.text.orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { vm.cancelEdit() }) { Icon(AppIcons.Close, "Cancel", Modifier.size(20.dp)) }
+                    }
+                }
+            }
+            LaunchedEffect(editingMsg?.id) {
+                if (editingMsg != null) { showEmoji = false; inputFocus.requestFocus(); keyboard?.show() }
+            }
             val replying = vm.replyingTo
             LaunchedEffect(replying?.id) {
                 if (replying != null) {
@@ -295,7 +313,7 @@ fun ChatScreen(vm: ChatViewModel) {
 
             InputBar(
                 text = vm.draft,
-                onTextChange = { vm.draft = it },
+                onTextChange = { vm.onDraftChange(it) },
                 onSend = vm::sendDraft,
                 emojiOpen = showEmoji,
                 onToggleEmoji = {
@@ -450,6 +468,7 @@ private fun MessageList(
                 senderIsAdmin = vm.isAdminSender(m.senderUid),
                 onReply = { vm.startReply(it) },
                 onAvatarClick = { vm.showPersonCard(it) },
+                seen = vm.isSeenByOthers(m),
                 onQuoteClick = { id ->
                     val target = newestFirst.indexOfFirst { it.id == id }
                     if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
@@ -556,7 +575,23 @@ private fun ChatHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                ConnectionLine(connection, locked, prefix = if (inPrivateRoom) "My Space" else if (hasProfile) "My Space" else null)
+                if (inPrivateRoom && !isGroup) {
+                    val peerUid = peer?.uid
+                    val sub = when {
+                        locked -> "Locked"
+                        vm.peerTyping -> "يكتب الآن…"
+                        vm.isOnline(peerUid) -> "متصل الآن"
+                        vm.lastSeenMs(peerUid) > 0 -> "آخر ظهور " + formatLastSeen(vm.lastSeenMs(peerUid))
+                        else -> "My Space"
+                    }
+                    val col = when {
+                        vm.peerTyping || vm.isOnline(peerUid) -> Color(0xFF22C55E)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text(sub, style = MaterialTheme.typography.labelMedium, color = col, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    ConnectionLine(connection, locked, prefix = if (inPrivateRoom) "My Space" else if (hasProfile) "My Space" else null)
+                }
             }
             HeaderButton(AppIcons.Music, "Music", onMusic, tint = if (musicActive) MaterialTheme.colorScheme.primary else null)
             HeaderButton(AppIcons.Video, "Video call", onVideoCall)
@@ -710,6 +745,7 @@ private fun MessageActionsSheet(
     isMine: Boolean,
     onReact: (String) -> Unit,
     onReply: () -> Unit,
+    onEdit: () -> Unit,
     onCopy: () -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
@@ -735,6 +771,7 @@ private fun MessageActionsSheet(
                 }
                 Spacer(Modifier.height(12.dp))
                 ActionRow(AppIcons.Reply, "Reply", onReply)
+                if (isMine && message.type == MessageType.TEXT) ActionRow(AppIcons.Copy, "Edit", onEdit)
                 if (message.type == MessageType.TEXT) ActionRow(AppIcons.Copy, "Copy", onCopy)
             }
             ActionRow(AppIcons.EyeOff, "Delete for me", onDeleteForMe)
@@ -812,4 +849,23 @@ private fun ClearForEveryoneDialog(onClear: (String, (String?) -> Unit) -> Unit,
         },
         dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("Cancel") } },
     )
+}
+
+private fun formatLastSeen(ms: Long): String {
+    val now = System.currentTimeMillis()
+    val diff = now - ms
+    val sdfTime = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+    return when {
+        diff < 60_000 -> "الآن"
+        diff < 3_600_000 -> "منذ ${diff / 60_000} د"
+        isSameDay(ms, now) -> sdfTime.format(java.util.Date(ms))
+        diff < 172_800_000 -> "أمس " + sdfTime.format(java.util.Date(ms))
+        else -> java.text.SimpleDateFormat("d MMM, h:mm a", java.util.Locale.getDefault()).format(java.util.Date(ms))
+    }
+}
+private fun isSameDay(a: Long, b: Long): Boolean {
+    val ca = java.util.Calendar.getInstance().apply { timeInMillis = a }
+    val cb = java.util.Calendar.getInstance().apply { timeInMillis = b }
+    return ca.get(java.util.Calendar.YEAR) == cb.get(java.util.Calendar.YEAR) &&
+        ca.get(java.util.Calendar.DAY_OF_YEAR) == cb.get(java.util.Calendar.DAY_OF_YEAR)
 }

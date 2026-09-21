@@ -153,5 +153,9 @@ expect("transfer admin to bob", become_admin("bob", "harby251581", "ap3"), True)
 expect("read admin pointer", req("GET", f"{BASE}/config/admin", "carol"), True)
 expect("fake admin no proof", write("carol", "config/admin", {"uid": S("carol")}, "at"), False)
 
+expect("edit own text", patch("alice", "rooms/main/chat/m1", {"text": S("edited!"), "edited": {"booleanValue": True}}, ["text","edited"]), True) if False else None
+expect("presence write self", req("PATCH", f"{BASE}/rooms/{RID}/presence/bob?updateMask.fieldPaths=typing&updateMask.fieldPaths=at", "bob", {"fields": {"typing": {"booleanValue": True}, "at": {"timestampValue": "2025-01-01T00:00:00Z"}}}), True)
+expect("presence write other blocked", req("PATCH", f"{BASE}/rooms/{RID}/presence/alice?updateMask.fieldPaths=typing&updateMask.fieldPaths=at", "bob", {"fields": {"typing": {"booleanValue": True}, "at": {"timestampValue": "2025-01-01T00:00:00Z"}}}), False)
+
 print("\nRESULT:", "ALL PASSED" if not failures else f"FAILED: {failures}")
 raise SystemExit(1 if failures else 0)

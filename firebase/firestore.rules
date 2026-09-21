@@ -136,6 +136,13 @@ service cloud.firestore {
             && request.resource.data.get('replyToText', '') == ''
             && request.resource.data.get('reactions', {}).size() == 0)
           ||
+          // author edits own TEXT message: only text + edited flag change
+          (resource.data.senderUid == request.auth.uid
+            && resource.data.type == 'text'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'edited'])
+            && str(request.resource.data.text, 4000) && request.resource.data.text.size() > 0
+            && request.resource.data.edited == true)
+          ||
           (resource.data.type != 'deleted'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
           && request.resource.data.reactions is map
@@ -160,6 +167,13 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time;
         allow update: if false;
         allow delete: if isRoomMember(roomId); // any member can tidy the playlist
+      }
+
+      // ---------- per-room presence: typing + last read (seen) ----------
+      match /presence/{presUid} {
+        allow read: if isRoomMember(roomId);
+        allow write: if isRoomMember(roomId) && presUid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['typing', 'lastReadMs', 'at']);
       }
 
       // ---------- shared playback + clear-chat marker ----------

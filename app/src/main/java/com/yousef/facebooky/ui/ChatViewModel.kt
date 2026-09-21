@@ -133,7 +133,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var recordingPaused by mutableStateOf(false)
         private set
-    var draft by mutableStateOf("")
+    /** uids currently typing in this room (excluding me). */
+    var typingUids by mutableStateOf<Set<String>>(emptySet())
+        private set
+    /** uid -> last time they read this room (ms), to show "seen". */
+    var lastReadByUser by mutableStateOf<Map<String, Long>>(emptyMap())
+        private set
+    private var lastTypingPing = 0L
+    /** Call when the text field changes, to broadcast "typing…". */
+    fun onDraftChange(value: String) {
+        draft = value
+        val uid = myUid ?: return
+        val now = System.currentTimeMillis()
+        if (value.isNotBlank()) {
+            if (now - lastTypingPing > 3000) {
+                lastTypingPing = now
+                chatRepo.setTyping(uid, true)
+            }
+        } else {
+            chatRepo.setTyping(uid, false)
+        }
+    }
+
+    fun stopTyping() {
+        myUid?.let { chatRepo.setTyping(it, false) }
+    }
     /** Everyone's live name + photo (uid -> profile). */
     var people by mutableStateOf<Map<String, UserProfile>>(emptyMap())
         private set
@@ -208,11 +232,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 .retryWhen { e, _ -> Log.w(TAG, "users listener", e); delay(5000); true }
                 .collect { people = it }
         }
-        // My rooms list (for the chat switcher).
+        // My rooms list (for the chat switcher). Restore the last-opened room once.
+        var restored = false
         viewModelScope.launch {
             directory.observeMyRooms(uid)
                 .retryWhen { e, _ -> Log.w(TAG, "rooms listener", e); delay(5000); true }
-                .collect { rooms -> myRooms = rooms.sortedByDescending { it.lastActivityMs } }
+                .collect { rooms ->
+                    myRooms = rooms.sortedByDescending { it.lastActivityMs }
+                    if (!restored) {
+                        val last = hiddenPrefs.getString("last_room", null)
+                        val room = rooms.firstOrNull { it.id == last }
+                        if (last != null && room != null && roomId == FirebasePaths.MAIN_ROOM) {
+                            restored = true
+                            openRoom(room)
+                        } else if (last == null) restored = true
+                    }
+                }
         }
         // Make sure I have a short ID others can use to reach me.
         viewModelScope.launch {
@@ -233,7 +268,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val lang = java.util.Locale.getDefault().toLanguageTag()
             while (true) {
                 admin.heartbeat(uid, deviceName, myRegion, lang)
-                delay(30_000)
+                delay(20_000)
             }
         }
         viewModelScope.launch {
@@ -266,6 +301,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         messages = emptyList()
         replyingTo = null
 
+        if (newRoomId != FirebasePaths.MAIN_ROOM) hiddenPrefs.edit().putString("last_room", newRoomId).apply()
+        else hiddenPrefs.edit().remove("last_room").apply()
         chatRepo = ChatRepository(db, newRoomId)
         musicRepo = MusicRepository(db, newRoomId)
         music = MusicController(getApplication(), musicRepo, viewModelScope, { authRepo.currentUid }, blobs::playablePath)
@@ -286,6 +323,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     refreshVisible()
                     fromCache = snap.fromCache
                     updateConnection()
+                    chatRepo.markRead(authRepo.currentUid ?: "")
                 }
         }
         roomJobs += viewModelScope.launch {
@@ -308,7 +346,35 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
         }
+        roomJobs += viewModelScope.launch {
+            chatRepo.observePresence()
+                .retryWhen { _, _ -> delay(5000); true }
+                .collect { p ->
+                    typingUids = p.typing - (myUid ?: "")
+                    lastReadByUser = p.lastReadMs
+                }
+        }
+        chatRepo.markRead(authRepo.currentUid ?: "")
         music.start()
+    }
+
+    /** Others have "seen" my latest message if their lastRead >= its time. */
+    /** Is a user considered online now (heartbeat within ~50s)? */
+    fun isOnline(uid: String?): Boolean {
+        val u = uid ?: return false
+        val seen = people[u]?.lastSeenMs ?: 0L
+        return seen > System.currentTimeMillis() - 50_000
+    }
+
+    fun lastSeenMs(uid: String?): Long = uid?.let { people[it]?.lastSeenMs } ?: 0L
+
+    /** True if the person on the other side is typing in this room. */
+    val peerTyping: Boolean get() = typingUids.isNotEmpty()
+
+    fun isSeenByOthers(m: ChatMessage): Boolean {
+        if (m.senderUid != myUid) return false
+        val t = m.timestamp?.time ?: return false
+        return lastReadByUser.any { (uid, read) -> uid != myUid && read >= t }
     }
 
     // ---------- rooms / IDs ----------
@@ -641,6 +707,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- sending ----------
 
     fun sendDraft() {
+        if (editing != null) { commitEdit(); return }
+        stopTyping()
         val text = draft.trim()
         if (text.isEmpty()) return
         draft = ""
@@ -687,6 +755,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (m.type == MessageType.DELETED) return
         val next = if (m.reactions[uid] == emoji) null else emoji
         chatRepo.react(m.id, uid, next, ::onSendError)
+    }
+
+    var editing by mutableStateOf<ChatMessage?>(null)
+        private set
+
+    fun startEdit(m: ChatMessage) {
+        if (m.senderUid != myUid || m.type != MessageType.TEXT) return
+        editing = m
+        draft = m.text
+    }
+
+    fun cancelEdit() {
+        editing = null
+        draft = ""
+    }
+
+    fun commitEdit() {
+        val m = editing ?: return
+        val newText = draft.trim()
+        editing = null
+        draft = ""
+        if (newText.isEmpty() || newText == m.text) return
+        chatRepo.editText(m.id, newText, ::onSendError)
     }
 
     fun deleteForEveryone(m: ChatMessage) {

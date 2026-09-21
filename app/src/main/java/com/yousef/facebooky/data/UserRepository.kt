@@ -70,6 +70,7 @@ class UserRepository(private val db: FirebaseFirestore, private val context: Con
                         d.id, d.getString("name").orEmpty(), d.getString("photoUrl").orEmpty(),
                         shortId = d.getString("shortId").orEmpty(),
                         isAdmin = d.getBoolean("admin") ?: false,
+                        lastSeenMs = d.getTimestamp("lastSeen")?.toDate()?.time ?: 0L,
                     )
                 }
             )

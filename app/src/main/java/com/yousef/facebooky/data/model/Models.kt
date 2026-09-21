@@ -22,6 +22,7 @@ data class UserProfile(
     /** Friendly public ID others use to start a chat, e.g. "K7Q-4M2". */
     val shortId: String = "",
     val isAdmin: Boolean = false,
+    val lastSeenMs: Long = 0L,
 ) {
     val isComplete: Boolean get() = name.isNotBlank() && (photoUrl.isNotBlank() || localPhoto.isNotBlank())
 
@@ -47,6 +48,7 @@ data class ChatMessage(
     val replyToText: String = "",
     /** uid -> emoji */
     val reactions: Map<String, String> = emptyMap(),
+    val edited: Boolean = false,
 ) {
     /** One-line description used for reply previews. */
     val preview: String
