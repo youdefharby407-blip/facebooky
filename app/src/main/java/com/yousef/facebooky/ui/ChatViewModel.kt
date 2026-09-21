@@ -139,6 +139,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** uid -> last time they read this room (ms), to show "seen". */
     var lastReadByUser by mutableStateOf<Map<String, Long>>(emptyMap())
         private set
+    var draft by mutableStateOf("")
     private var lastTypingPing = 0L
     /** Call when the text field changes, to broadcast "typing…". */
     fun onDraftChange(value: String) {
