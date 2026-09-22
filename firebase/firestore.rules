@@ -24,9 +24,14 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/config/admin)
         && get(/databases/$(database)/documents/config/admin).data.uid == request.auth.uid;
     }
+    // A banned device loses all access. config/banned.uids holds the banned uids.
+    function notBanned() {
+      return !exists(/databases/$(database)/documents/config/banned)
+        || !(request.auth.uid in get(/databases/$(database)/documents/config/banned).data.get('uids', []));
+    }
     function roomData(roomId) { return get(/databases/$(database)/documents/rooms/$(roomId)).data; }
     function isRoomMember(roomId) {
-      return signedIn() && (
+      return signedIn() && notBanned() && (
         roomId == 'main'
         || (exists(/databases/$(database)/documents/rooms/$(roomId))
             && request.auth.uid in roomData(roomId).members)
@@ -50,7 +55,7 @@ service cloud.firestore {
         && (!('region' in request.resource.data) || str(request.resource.data.region, 60))
         && (!('language' in request.resource.data) || str(request.resource.data.language, 20))
         ;
-      allow delete: if isMe(uid);
+      allow delete: if isMe(uid) || isAdmin();
     }
 
     // ---------- shortIds/{id} : public directory (reserve once, never steal) ----------
@@ -112,7 +117,7 @@ service cloud.firestore {
           && request.resource.data.senderUid == request.auth.uid
           && str(request.resource.data.senderName, 40) && request.resource.data.senderName.size() > 0
           && httpsOrEmpty(request.resource.data.senderPhoto)
-          && request.resource.data.type in ['text', 'image', 'voice', 'sticker', 'music']
+          && request.resource.data.type in ['text', 'image', 'voice', 'sticker', 'music', 'video', 'vsticker']
           && str(request.resource.data.get('text', ''), 4000)
           && httpsOrEmpty(request.resource.data.get('mediaUrl', ''))
           && str(request.resource.data.get('mediaPath', ''), 300)
@@ -157,7 +162,8 @@ service cloud.firestore {
       match /music/{songId} {
         allow read: if isRoomMember(roomId);
         allow create: if isRoomMember(roomId)
-          && request.resource.data.keys().hasOnly(['title', 'url', 'storagePath', 'uploaderUid', 'sizeBytes', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['title', 'url', 'storagePath', 'uploaderUid', 'sizeBytes', 'coverUrl', 'createdAt'])
+          && httpsOrEmpty(request.resource.data.get('coverUrl', ''))
           && request.resource.data.uploaderUid == request.auth.uid
           && str(request.resource.data.title, 200) && request.resource.data.title.size() > 0
           && httpsOrEmpty(request.resource.data.url) && request.resource.data.url != ''
@@ -261,13 +267,13 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['ownerUid', 'kind', 'mime', 'size', 'chunks', 'createdAt'])
         && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.kind in ['profile', 'images', 'stickers', 'voice', 'music']
+        && request.resource.data.kind in ['profile', 'images', 'stickers', 'voice', 'music', 'video']
         && str(request.resource.data.mime, 100)
         && request.resource.data.size is int && request.resource.data.size > 0
-        && ((request.resource.data.kind == 'music' && request.resource.data.size <= 15 * 1024 * 1024)
-            || (request.resource.data.kind != 'music' && request.resource.data.size <= 5 * 1024 * 1024))
+        && ((request.resource.data.kind in ['music', 'video'] && request.resource.data.size <= 15 * 1024 * 1024)
+            || (!(request.resource.data.kind in ['music', 'video']) && request.resource.data.size <= 5 * 1024 * 1024))
         && request.resource.data.chunks is int
-        && request.resource.data.chunks >= 1 && request.resource.data.chunks <= 20
+        && request.resource.data.chunks >= 1 && request.resource.data.chunks <= 25
         && request.resource.data.createdAt == request.time;
       allow update: if false;
       allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
@@ -292,12 +298,19 @@ service cloud.firestore {
     // proof) makes this device admin and automatically demotes the previous one.
     match /config/{docId} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && docId == 'admin'
-        && request.resource.data.keys().hasOnly(['uid', 'proof', 'at'])
-        && request.resource.data.uid == request.auth.uid
-        && str(request.resource.data.proof, 64)
-        && request.resource.data.at == request.time
-        && proofOk(request.resource.data.proof);
+      allow create, update: if signedIn() && (
+        (docId == 'admin'
+          && request.resource.data.keys().hasOnly(['uid', 'proof', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && str(request.resource.data.proof, 64)
+          && request.resource.data.at == request.time
+          && proofOk(request.resource.data.proof))
+        ||
+        // Only the admin can ban/unban devices.
+        (docId == 'banned' && isAdmin()
+          && request.resource.data.keys().hasOnly(['uids'])
+          && request.resource.data.uids is list)
+      );
       allow delete: if false;
     }
 

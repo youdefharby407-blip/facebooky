@@ -35,6 +35,7 @@ import com.yousef.facebooky.data.model.UserProfile
 import com.yousef.facebooky.music.MusicController
 import com.yousef.facebooky.util.ImageUtils
 import com.yousef.facebooky.util.MediaUtils
+import com.yousef.facebooky.util.VideoUtils
 import com.yousef.facebooky.util.networkAvailableFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -110,6 +111,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var adminUsers by mutableStateOf<List<Presence>>(emptyList())
         private set
     var adminRooms by mutableStateOf<List<RoomInfo>>(emptyList())
+        private set
+    var bannedUids by mutableStateOf<Set<String>>(emptySet())
+        private set
+    /** True if THIS device was banned by the admin — the app locks itself. */
+    var iAmBanned by mutableStateOf(false)
         private set
 
     var myUid by mutableStateOf<String?>(null)
@@ -278,6 +284,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 .collect { adminUid ->
                     adminUidGlobal = adminUid
                     isAdmin = adminUid.isNotBlank() && adminUid == myUid
+                }
+        }
+        viewModelScope.launch {
+            admin.observeBanned()
+                .retryWhen { _, _ -> delay(5000); true }
+                .collect { banned ->
+                    bannedUids = banned
+                    iAmBanned = uid in banned
                 }
         }
         calls.startListening(uid)
@@ -538,6 +552,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeAdmin() { showAdmin = false }
+
+    fun banDevice(uid: String) {
+        if (uid == myUid) return
+        viewModelScope.launch { runCatching { admin.banUser(uid) }.onFailure { _events.tryEmit("تعذّر الحظر") } }
+    }
+
+    fun unbanDevice(uid: String) {
+        viewModelScope.launch { runCatching { admin.unbanUser(uid) } }
+    }
+
+    fun removeDevice(uid: String) {
+        if (uid == myUid) return
+        viewModelScope.launch { runCatching { admin.removeUser(uid) }.onFailure { _events.tryEmit("تعذّر الحذف") } }
+    }
 
     /** Verifies the admin password and unlocks the admin console. */
     fun loginAdmin(password: String, onDone: (String?) -> Unit) {
@@ -844,6 +872,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         uploadAndSend(p, MessageType.STICKER, "stickers", "png", "image/png") { ImageUtils.sticker(getApplication(), uri) }
     }
 
+    fun sendVideo(uri: Uri) = withProfile { p ->
+        uploadAndSend(p, MessageType.VIDEO, "video", "mp4", "video/mp4") {
+            VideoUtils.readWhole(getApplication(), uri)
+        }
+    }
+
+    /** Sends a trimmed [startMs,endMs] clip of [uri] as a looping muted video sticker. */
+    fun sendVideoSticker(uri: Uri, startMs: Long, endMs: Long) = withProfile { p ->
+        uploadAndSend(p, MessageType.VIDEO_STICKER, "video", "mp4", "video/mp4") {
+            VideoUtils.trimToStickerBytes(getApplication(), uri, startMs, endMs)
+        }
+    }
+
     fun startRecording() {
         if (!ensureProfile()) return
         if (recorder.start()) {
@@ -913,7 +954,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "upload failed", e)
-                _events.tryEmit(friendlyError(e))
+                _events.tryEmit(
+                    if (e is IllegalArgumentException && e.message == "too_large") "الفيديو كبير (الحد 15 ميجا)"
+                    else friendlyError(e)
+                )
             } finally {
                 uploadsInProgress--
             }
@@ -955,7 +999,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val ref = blobs.upload(p.uid, "music", info.mimeType, bytes) { progress ->
                     viewModelScope.launch { if (musicUpload != null) musicUpload = info.title to progress }
                 }
-                musicRepo.addSong(id, info.title, ref, "", p.uid, bytes.size.toLong())
+                // Album art (if the file has any) -> uploaded as a small image blob.
+                val coverRef = try {
+                    withContext(Dispatchers.IO) { MediaUtils.extractCover(getApplication(), uri) }
+                        ?.let { blobs.upload(p.uid, "images", "image/jpeg", it) }.orEmpty()
+                } catch (e: Exception) { "" }
+                musicRepo.addSong(id, info.title, ref, "", p.uid, bytes.size.toLong(), coverRef)
                 chatRepo.send(
                     chatRepo.newId(), p, MessageType.MUSIC,
                     text = info.title, mediaUrl = ref, refId = id, onError = ::onSendError,

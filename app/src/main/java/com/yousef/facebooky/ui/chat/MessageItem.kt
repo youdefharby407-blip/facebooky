@@ -4,6 +4,7 @@ package com.yousef.facebooky.ui.chat
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -179,6 +180,25 @@ fun MessageItem(
                         .size(120.dp)
                         .combinedClickable(onClick = {}, onLongClick = longPress),
                 )
+                MessageType.VIDEO -> Box(
+                    Modifier
+                        .size(230.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black)
+                        .combinedClickable(onClick = {}, onLongClick = longPress),
+                ) {
+                    BlobVideo(message.mediaUrl, Modifier.fillMaxSize(), loop = false, muted = false, autoPlay = false)
+                    Icon(Icons.Rounded.PlayArrow, "Play", tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.align(Alignment.Center).size(48.dp))
+                }
+                MessageType.VIDEO_STICKER -> Box(
+                    Modifier
+                        .size(140.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .combinedClickable(onClick = {}, onLongClick = longPress),
+                ) {
+                    BlobVideo(message.mediaUrl, Modifier.fillMaxSize(), loop = true, muted = true, autoPlay = true)
+                }
                 MessageType.VOICE -> VoiceBubble(message, voice, bubbleColor, contentColor, shape, onToggleVoice, longPress)
                 MessageType.MUSIC -> MusicBubble(message, bubbleColor, contentColor, shape, onPlaySong, longPress)
                 MessageType.DELETED -> Surface(

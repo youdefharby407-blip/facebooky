@@ -48,6 +48,34 @@ class AdminRepository(private val db: FirebaseFirestore) {
             .await()
     }
 
+    private val bannedDoc = db.collection("config").document("banned")
+
+    /** ADMIN: ban a device/uid (they lose all access). Needs admin (enforced by rules). */
+    suspend fun banUser(uid: String) {
+        bannedDoc.set(mapOf("uids" to com.google.firebase.firestore.FieldValue.arrayUnion(uid)), SetOptions.merge()).await()
+    }
+
+    suspend fun unbanUser(uid: String) {
+        bannedDoc.set(mapOf("uids" to com.google.firebase.firestore.FieldValue.arrayRemove(uid)), SetOptions.merge()).await()
+    }
+
+    /** ADMIN: remove a device entirely = ban it and delete its profile. */
+    suspend fun removeUser(uid: String) {
+        banUser(uid)
+        runCatching { db.collection(FirebasePaths.USERS).document(uid).delete().await() }
+    }
+
+    /** Live set of banned uids. */
+    fun observeBanned(): Flow<Set<String>> = callbackFlow {
+        val reg = bannedDoc.addSnapshotListener { snap, e ->
+            if (e != null) { close(e); return@addSnapshotListener }
+            @Suppress("UNCHECKED_CAST")
+            val list = (snap?.get("uids") as? List<String>).orEmpty().toSet()
+            trySend(list)
+        }
+        awaitClose { reg.remove() }
+    }
+
     /** Live: which single uid is currently the admin ("" if none). */
     fun observeAdminUid(): Flow<String> = callbackFlow {
         val reg = adminDoc.addSnapshotListener { snap, e ->

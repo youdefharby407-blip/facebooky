@@ -308,7 +308,12 @@ fun AdminScreen(vm: ChatViewModel, onClose: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 8.dp))
                 }
                 items(vm.adminUsers, key = { it.uid }) { u ->
-                    AdminDeviceRow(u, myRegion = vm.myRegion, fmt = fmt)
+                    AdminDeviceRow(
+                        u, myRegion = vm.myRegion, fmt = fmt,
+                        banned = u.uid in vm.bannedUids, isMe = u.uid == vm.myUid,
+                        onBan = { vm.banDevice(u.uid) }, onUnban = { vm.unbanDevice(u.uid) },
+                        onRemove = { vm.removeDevice(u.uid) },
+                    )
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 item { Spacer(Modifier.height(40.dp)) }
@@ -372,42 +377,48 @@ private fun AdminRoomCard(vm: ChatViewModel, room: RoomInfo, fmt: SimpleDateForm
 }
 
 @Composable
-private fun AdminDeviceRow(u: com.yousef.facebooky.data.model.Presence, myRegion: String, fmt: SimpleDateFormat) {
-    // Flag a device whose timezone differs from mine (possible different location).
+private fun AdminDeviceRow(u: com.yousef.facebooky.data.model.Presence, myRegion: String, fmt: SimpleDateFormat,
+                          banned: Boolean, isMe: Boolean, onBan: () -> Unit, onUnban: () -> Unit, onRemove: () -> Unit) {
     val different = myRegion.isNotBlank() && u.region.isNotBlank() && u.region != myRegion
-    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
-            if (u.photoUrl.isNotBlank()) {
-                AsyncImage(model = u.photoUrl, contentDescription = null,
-                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            } else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(AppIcons.User, null, Modifier.size(20.dp))
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(u.name.ifBlank { "(no name yet)" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                "ID ${u.shortId.ifBlank { "—" }} · ${u.device.ifBlank { "device" }}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    (u.region.ifBlank { "region —" }) + (if (u.language.isNotBlank()) " · ${u.language}" else ""),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (different) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (different) {
-                    Spacer(Modifier.width(6.dp))
-                    Text("⚠ different area", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                if (u.photoUrl.isNotBlank()) {
+                    AsyncImage(model = u.photoUrl, contentDescription = null,
+                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(AppIcons.User, null, Modifier.size(20.dp))
                 }
             }
-            Text("last seen ${if (u.lastSeenMs > 0) fmt.format(Date(u.lastSeenMs)) else "—"}",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(u.name.ifBlank { "(no name)" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (banned) { Spacer(Modifier.width(6.dp)); Text("محظور", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
+                }
+                Text("ID ${u.shortId.ifBlank { "—" }} · ${u.device.ifBlank { "device" }}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("آخر دخول: ${if (u.lastSeenMs > 0) fmt.format(Date(u.lastSeenMs)) else "—"}",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (!isMe) {
+            Row(Modifier.padding(top = 8.dp)) {
+                if (banned) {
+                    OutlinedButton(onClick = onUnban, modifier = Modifier.weight(1f)) { Text("فك الحظر") }
+                } else {
+                    OutlinedButton(onClick = onBan, modifier = Modifier.weight(1f)) { Text("حظر") }
+                }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onRemove, modifier = Modifier.weight(1f)) {
+                    Text("حذف الجهاز", color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
     }
 }
+
 
 /** Up to 3 member photos stacked into one 40dp circle (for group headers). */
 @Composable

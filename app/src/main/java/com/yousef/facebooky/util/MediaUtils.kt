@@ -32,6 +32,28 @@ object MediaUtils {
         val mime = context.contentResolver.getType(uri)?.takeIf { it.startsWith("audio/") } ?: "audio/mpeg"
         return AudioFileInfo(title.ifBlank { "Song" }, ext, mime, size)
     }
+
+    /** Extracts embedded album art (JPEG) from an audio file, or null if none. */
+    fun extractCover(context: Context, uri: Uri): ByteArray? {
+        val r = android.media.MediaMetadataRetriever()
+        return try {
+            r.setDataSource(context, uri)
+            val raw = r.embeddedPicture ?: return null
+            // Downscale to a small square cover to keep it tiny.
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return null
+            val size = minOf(bmp.width, bmp.height)
+            val x = (bmp.width - size) / 2; val y = (bmp.height - size) / 2
+            val square = android.graphics.Bitmap.createBitmap(bmp, x, y, size, size)
+            val scaled = android.graphics.Bitmap.createScaledBitmap(square, 256, 256, true)
+            val out = java.io.ByteArrayOutputStream()
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 84, out)
+            out.toByteArray()
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { r.release() }
+        }
+    }
 }
 
 fun formatTime(ms: Long): String {

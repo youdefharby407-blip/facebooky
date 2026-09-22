@@ -12,6 +12,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yousef.facebooky.call.CallPhase
 import com.yousef.facebooky.ui.ChatViewModel
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import com.yousef.facebooky.ui.call.CallScreen
 import com.yousef.facebooky.ui.chat.ChatScreen
 import com.yousef.facebooky.ui.sheets.ProfileSheet
@@ -40,6 +44,10 @@ private fun AppRoot(vm: ChatViewModel) {
         onDispose { view.keepScreenOn = false }
     }
 
+    if (vm.iAmBanned) {
+        BannedScreen()
+        return
+    }
     if (inCall) CallScreen(vm, call) else ChatScreen(vm)
 
     if (vm.showProfileSheet) {
@@ -52,3 +60,30 @@ private fun AppRoot(vm: ChatViewModel) {
     }
 }
 
+@androidx.compose.runtime.Composable
+private fun BannedScreen() {
+    androidx.compose.material3.Surface(
+        androidx.compose.ui.Modifier.fillMaxSize(),
+        color = androidx.compose.material3.MaterialTheme.colorScheme.background,
+    ) {
+        androidx.compose.foundation.layout.Column(
+            androidx.compose.ui.Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        ) {
+            androidx.compose.material3.Text("🚫", style = androidx.compose.material3.MaterialTheme.typography.displayMedium)
+            androidx.compose.foundation.layout.Spacer(androidx.compose.ui.Modifier.height(12.dp))
+            androidx.compose.material3.Text(
+                "تم حظر هذا الجهاز",
+                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+            )
+            androidx.compose.foundation.layout.Spacer(androidx.compose.ui.Modifier.height(8.dp))
+            androidx.compose.material3.Text(
+                "لا يمكنك الوصول إلى الشات.",
+                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}

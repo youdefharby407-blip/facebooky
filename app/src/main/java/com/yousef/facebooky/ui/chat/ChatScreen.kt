@@ -143,6 +143,13 @@ fun ChatScreen(vm: ChatViewModel) {
     val pickSticker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.sendSticker(uri)
     }
+    val pickVideo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.sendVideo(uri)
+    }
+    var trimUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val pickVideoSticker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) trimUri = uri
+    }
     val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.addMusic(uri)
     }
@@ -365,6 +372,13 @@ fun ChatScreen(vm: ChatViewModel) {
     if (showAddMember) {
         AddMemberDialog(onAdd = vm::addMemberById, onClose = { showAddMember = false })
     }
+    trimUri?.let { uri ->
+        VideoStickerTrimmer(
+            uri = uri,
+            onConfirm = { start, end -> vm.sendVideoSticker(uri, start, end); trimUri = null },
+            onDismiss = { trimUri = null },
+        )
+    }
     if (showAdminLogin) {
         AdminLoginDialog(
             onLogin = vm::loginAdmin,
@@ -379,7 +393,9 @@ fun ChatScreen(vm: ChatViewModel) {
         AttachSheet(
             onDismiss = { showAttach = false },
             onPhoto = { showAttach = false; pickImage.launch(imageOnly) },
+            onVideo = { showAttach = false; pickVideo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
             onSticker = { showAttach = false; pickSticker.launch(imageOnly) },
+            onVideoSticker = { showAttach = false; pickVideoSticker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
             onMusic = { showAttach = false; showMusic = true },
             onProfile = { showAttach = false; vm.openProfileEditor() },
         )

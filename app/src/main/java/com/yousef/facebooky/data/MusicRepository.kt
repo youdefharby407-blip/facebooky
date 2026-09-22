@@ -34,6 +34,7 @@ class MusicRepository(db: FirebaseFirestore, roomId: String) {
                     url = d.getString("url").orEmpty(),
                     storagePath = d.getString("storagePath").orEmpty(),
                     uploaderUid = d.getString("uploaderUid").orEmpty(),
+                    coverUrl = d.getString("coverUrl").orEmpty(),
                 )
             }.filter { it.url.isNotBlank() }
             trySend(list)
@@ -77,7 +78,7 @@ class MusicRepository(db: FirebaseFirestore, roomId: String) {
         }
     }
 
-    suspend fun addSong(id: String, title: String, url: String, storagePath: String, uploaderUid: String, sizeBytes: Long) {
+    suspend fun addSong(id: String, title: String, url: String, storagePath: String, uploaderUid: String, sizeBytes: Long, coverUrl: String = "") {
         songs.document(id).set(
             mapOf(
                 "title" to title,
@@ -85,6 +86,7 @@ class MusicRepository(db: FirebaseFirestore, roomId: String) {
                 "storagePath" to storagePath,
                 "uploaderUid" to uploaderUid,
                 "sizeBytes" to sizeBytes,
+                "coverUrl" to coverUrl,
                 "createdAt" to FieldValue.serverTimestamp(),
             )
         ).await()

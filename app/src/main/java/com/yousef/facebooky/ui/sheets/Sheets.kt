@@ -27,6 +27,8 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.AddAPhoto
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MusicNote
@@ -80,14 +82,18 @@ import kotlinx.coroutines.delay
 fun AttachSheet(
     onDismiss: () -> Unit,
     onPhoto: () -> Unit,
+    onVideo: () -> Unit,
     onSticker: () -> Unit,
+    onVideoSticker: () -> Unit,
     onMusic: () -> Unit,
     onProfile: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(bottom = 16.dp)) {
             SheetRow(Icons.Rounded.Image, "Photo", "Send a picture from your phone", onPhoto)
+            SheetRow(Icons.Rounded.Videocam, "Video", "Send a video (up to 15 MB)", onVideo)
             SheetRow(Icons.Rounded.AutoAwesome, "Sticker", "Turn one of your photos into a sticker", onSticker)
+            SheetRow(Icons.Rounded.Movie, "Video sticker", "Cut a short clip (2–15s) into a sticker", onVideoSticker)
             SheetRow(Icons.Rounded.LibraryMusic, "Music", "Listen together", onMusic)
             SheetRow(Icons.Rounded.Person, "My profile", "Change your name or photo", onProfile)
         }
@@ -428,10 +434,23 @@ private fun SongRow(
             .padding(vertical = 10.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            Icons.Rounded.MusicNote, null,
-            tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (song.coverUrl.isNotBlank()) {
+            coil.compose.AsyncImage(
+                model = song.coverUrl, contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
+            )
+        } else {
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.MusicNote, null,
+                    tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(

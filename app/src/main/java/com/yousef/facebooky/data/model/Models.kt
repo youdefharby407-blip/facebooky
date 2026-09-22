@@ -8,6 +8,9 @@ object MessageType {
     const val VOICE = "voice"
     const val STICKER = "sticker"
     const val MUSIC = "music"
+    const val VIDEO = "video"
+    /** A short looping muted video used as a sticker. */
+    const val VIDEO_STICKER = "vsticker"
     /** A message its author deleted for everyone (content removed, placeholder shown). */
     const val DELETED = "deleted"
 }
@@ -55,6 +58,8 @@ data class ChatMessage(
         get() = when (type) {
             MessageType.IMAGE -> "📷 Photo"
             MessageType.STICKER -> "Sticker"
+            MessageType.VIDEO -> "🎬 Video"
+            MessageType.VIDEO_STICKER -> "Sticker"
             MessageType.VOICE -> "🎤 Voice message"
             MessageType.MUSIC -> "🎵 $text"
             MessageType.DELETED -> "Deleted message"
@@ -108,6 +113,7 @@ data class Song(
     val url: String = "",
     val storagePath: String = "",
     val uploaderUid: String = "",
+    val coverUrl: String = "",
     val isBundled: Boolean = false,
 )
 
