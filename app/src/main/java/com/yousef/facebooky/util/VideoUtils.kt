@@ -48,7 +48,7 @@ object VideoUtils {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
         try {
-            extractor.setDataSource(context, uri)
+            extractor.setDataSource(context, uri, null)
             // pick the video track only (no audio -> looping muted sticker)
             var videoTrack = -1
             var format: MediaFormat? = null
